@@ -1,0 +1,22 @@
+[project]
+name = "tetris-mcts-drl"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "James Sue-Ling",email = "james_sueling@hotmail.co.uk"}
+]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "tqdm (>=4.67.1,<5.0.0)",
+    "numpy (>=2.3.0,<3.0.0)",
+    "torch (>=2.7.1,<3.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+package-mode = false

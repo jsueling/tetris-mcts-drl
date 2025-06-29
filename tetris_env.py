@@ -13,13 +13,13 @@ class Tetromino:
     figures = [
         # Each figure is represented by a flattened 4x4 dimension
         # with a list of each 4 rotations it can take
-        [[0, 4, 8, 12], [0, 1, 2, 3], [0, 4, 8, 12], [0, 1, 2, 3]], # I
-        [[0, 1, 5, 6], [1, 4, 5, 8], [0, 1, 5, 6], [1, 4, 5, 8]],   # Z
-        [[4, 5, 1, 2], [0, 4, 5, 9], [4, 5, 1, 2], [0, 4, 5, 9]],   # S
-        [[1, 0, 4, 8], [0, 4, 5, 6], [1, 5, 9, 8], [0, 1, 2, 6]],   # J
-        [[0, 1, 5, 9], [4, 0, 1, 2], [0, 4, 8, 9], [4, 5, 6, 2]],   # L
-        [[1, 4, 5, 6], [1, 4, 5, 9], [0, 1, 2, 5], [0, 4, 8, 5]],   # T
-        [[0, 1, 4, 5], [0, 1, 4, 5], [0, 1, 4, 5], [0, 1, 4, 5]],   # O
+        [[0, 4, 8, 12], [0, 1, 2, 3]],                            # I
+        [[0, 1, 5, 6], [1, 4, 5, 8]],                             # Z
+        [[4, 5, 1, 2], [0, 4, 5, 9]],                             # S
+        [[1, 0, 4, 8], [0, 4, 5, 6], [1, 5, 9, 8], [0, 1, 2, 6]], # J
+        [[0, 1, 5, 9], [4, 0, 1, 2], [0, 4, 8, 9], [4, 5, 6, 2]], # L
+        [[1, 4, 5, 6], [1, 4, 5, 9], [0, 1, 2, 5], [0, 4, 8, 5]], # T
+        [[0, 1, 4, 5]],                                           # O
     ]
 
     default_spawns = [
@@ -45,11 +45,27 @@ class Tetromino:
     # A Tetromino's (x, y) coordinates reference the position
     # of where cell 0 in the 4x4 grid is located in the 10x20 grid.
 
-    def __init__(self, x: int, y: int, fig_type: int, rotation: int):
-        self.x = x # x-coordinate (column) of the Tetromino
-        self.y = y # y-coordinate (row) of the Tetromino
-        self.type = fig_type # type of the Tetromino (0-6)
+    def __init__(self, tetromino_type: int):
+        # Instantiated with no position or rotation
+        self.x = None
+        self.y = None
+        self.type = tetromino_type # type of the Tetromino (0-6)
+        self.rotation = None
+
+    def spawn(self, x: int, rotation: int):
+        """
+        Spawns the Tetromino in the grid at row 0 and the specified column (x)
+        and rotation.
+        """
+        self.x = x
+        self.y = 0
         self.rotation = rotation # rotation of the Tetromino (0-3)
+
+    def despawn(self):
+        """Despawn the Tetromino by resetting its position and rotation."""
+        self.x = None
+        self.y = None
+        self.rotation = None
 
     def image(self):
         """Returns the current 4x4 image of the Tetromino based on its type and rotation."""
@@ -83,11 +99,11 @@ class Tetris:
             grid_repr.append("".join(str(self.grid[row][col]) for col in range(self.width)))
         return "\n".join(grid_repr)
 
-    def new_tetromino(self, x: int, y: int, fig_type: int, rotation: int):
+    def new_tetromino(self, tetromino_type: int):
         """
-        Creates a new Tetromino of fig_type at the specified (x, y) and rotation.
+        Creates a new Tetromino of tetromino_type at the specified (x, y) and rotation.
         """
-        self.current_tetromino = Tetromino(x, y, fig_type, rotation)
+        self.current_tetromino = Tetromino(tetromino_type)
 
     def get_next_piece(self):
         """
@@ -120,34 +136,29 @@ class Tetris:
         for cell_index in self.current_tetromino.image():
             tetromino_row = y + (cell_index // 4)
             tetromino_col = x + (cell_index % 4)
-            if any([ # OOB checks and collision check
-                tetromino_row < 0,
-                tetromino_row > self.height - 1,
-                tetromino_col > self.width - 1,
-                tetromino_col < 0,
+            if ( # OOB checks and collision check
+                tetromino_row < 0 or
+                tetromino_row >= self.height or
+                tetromino_col >= self.width or
+                tetromino_col < 0 or
                 self.grid[tetromino_row][tetromino_col] > 0
-            ]):
+            ):
                 return True
         return False
 
     def break_lines(self):
         """Break lines that are completely filled by Tetrominoes."""
 
-        # credits to https://github.com/nuno-faria/tetris-ai/blob/master/tetris.py#L161
-        lines_to_clear = [index for index, row in enumerate(self.grid) if all(row > 0)]
-        broken_lines = len(lines_to_clear)
+        filled_lines = np.all(self.grid > 0, axis=1)
+        # All filled lines now become broken lines
+        broken_lines = np.count_nonzero(filled_lines)
         if broken_lines > 0:
-            self.grid = np.vstack(
-                (
-                    # Create empty rows for the lines that were cleared
-                    np.zeros((broken_lines, self.width), dtype=int),
-                    # Stack the remaining rows that were not cleared
-                    np.array([
-                        self.grid[row_index] for row_index in range(self.height)
-                        if row_index not in lines_to_clear
-                    ])
-                )
-            )
+            self.grid = np.vstack((
+                # Add empty rows at the top to replace the broken lines
+                np.zeros((broken_lines, self.width), dtype=int),
+                # Keep only rows that were not filled (maintains ordering)
+                self.grid[~filled_lines]
+            ))
             self.score += broken_lines
 
     def hard_drop(self, colour=1):
@@ -189,16 +200,29 @@ class Tetris:
         Each action is represented as 2 digits in base 10:
         - The first digit is the rotation (0-3).
         - The second digit is the column (0-9).
+
         Legal actions here are defined using the simplified version of Tetris
         which assumes that the Tetromino can be spawned in any column.
+        Redundant rotations are also masked to avoid unnecessary actions.
         """
+
         legal_actions = [False] * (self.width * 4)
-        for rotation in range(4):
+
+        # Get the number of unique rotations for the current Tetromino
+        # since Tetrominoes have symmetric rotations.
+        unique_rotations = len(Tetromino.figures[self.current_tetromino.type])
+
+        for rotation in range(unique_rotations):
             for col in range(self.width):
-                self.current_tetromino.x = col
-                self.current_tetromino.rotation = rotation
+                # Try to spawn the Tetromino in the specified column and rotation
+                self.current_tetromino.spawn(x=col, rotation=rotation)
                 if not self.intersects():
                     legal_actions[rotation * self.width + col] = True
+
+        # Despawn the Tetromino after checking all legal actions
+        # to ensure the state is clean for the next action
+        self.current_tetromino.despawn()
+
         return legal_actions
 
     def step(self, action, colour=1):

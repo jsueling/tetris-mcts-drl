@@ -17,7 +17,7 @@ class MonteCarloTreeNode:
         self.state = state
         self.parent: MonteCarloTreeNode = parent
 
-        # Backup statistics
+        # Backpropagation statistics
         self.visit_count = 0
         self.q_value_sum = 0.0
 
@@ -41,7 +41,7 @@ class MonteCarloTreeNode:
             raise RuntimeError("run_iteration must be called on the root node only")
         leaf_node = self.select()
         q_value = leaf_node.evaluate()
-        leaf_node.backup(q_value)
+        leaf_node.backpropagate(q_value)
 
     def _puct_value(self, child: 'MonteCarloTreeNode') -> float:
         """
@@ -148,9 +148,9 @@ class MonteCarloTreeNode:
         self.is_evaluated = True
         return q_value
 
-    def backup(self, q_value: float):
+    def backpropagate(self, q_value: float):
         """
-        Backup the results of the evaluation for all nodes visited in the trajectory,
+        Backpropagate the results of the evaluation for all nodes visited in the trajectory,
         traversing parent nodes until reaching the root node.
         """
         node = self

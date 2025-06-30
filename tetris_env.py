@@ -100,12 +100,10 @@ class Tetris:
         return "\n".join(grid_repr)
 
     def new_tetromino(self, tetromino_type: int):
-        """
-        Creates a new Tetromino of tetromino_type at the specified (x, y) and rotation.
-        """
+        """Creates a new unspawned Tetromino of tetromino_type."""
         self.current_tetromino = Tetromino(tetromino_type)
 
-    def get_next_piece(self):
+    def get_next_piece(self, starting_piece=False):
         """
         Returns the next piece type based on the randomisation scheme.
         For "uniform", it returns a random piece type.
@@ -118,7 +116,10 @@ class Tetris:
             return random.randint(0, 6)
 
         if self.tetromino_randomisation_scheme == "bag":
-            if not self.bag:
+
+            # If it's the first piece of the episode
+            # or the bag is empty, refill and shuffle it
+            if starting_piece or not self.bag:
                 self.bag = list(range(len(Tetromino.figures)))
                 random.shuffle(self.bag)
             return self.bag.pop()
@@ -228,13 +229,34 @@ class Tetris:
     def step(self, action, colour=1):
         """
         Perform a step in the game by applying the given action.
+
         Each action is represented as 2 digits in base 10:
         - The first digit is the rotation (0-3).
         - The second digit is the column (0-9).
         """
         rotation, col = divmod(action, self.width)
-        self.current_tetromino.x = col
-        self.current_tetromino.rotation = rotation
+        self.current_tetromino.spawn(x=col, rotation=rotation) 
         if self.intersects():
             raise AssertionError("Illegal action: step() called without checking legal actions")
         self.hard_drop(colour)
+
+    def reset(self):
+        """Reset the game state to the initial conditions."""
+        self.grid.fill(0)
+        self.score = 0
+        self.done = False
+        # Generate the first Tetromino of the episode
+        self.new_tetromino(self.get_next_piece(starting_piece=True))
+        return self.current_tetromino.type
+
+    def copy(self):
+        """Create a deep copy of the current game state."""
+        new_env = Tetris(self.height, self.width, self.tetromino_randomisation_scheme)
+        new_env.grid = np.copyto(new_env.grid, self.grid)
+        new_env.score = self.score
+        new_env.done = self.done
+        if self.current_tetromino:
+            new_env.current_tetromino = Tetromino(self.current_tetromino.type)
+        if self.tetromino_randomisation_scheme == "bag":
+            new_env.bag = self.bag.copy()
+        return new_env

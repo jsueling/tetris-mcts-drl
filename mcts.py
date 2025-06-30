@@ -1,8 +1,11 @@
 """Monte Carlo Tree Search (MCTS) algorithm implementation."""
 
+from collections import defaultdict
+from typing import Dict, List, Optional
+
 import numpy as np
 
-from tetris_env import Tetris
+from tetris_env import Tetris, Tetromino
 
 ACTION_SPACE = 40 # Rotations * Columns
 C_PUCT = 1.0  # Hyperparameter modulating prior-guided exploration bonus in pUCT
@@ -12,10 +15,16 @@ class MonteCarloTreeNode:
     A node in the tree representing a game state.
     Actions connect game states as edges (parent-child relation).
     """
-    def __init__(self, state: Tetris, parent=None, prior_probability=0.0):
 
-        self.state = state
-        self.parent: MonteCarloTreeNode = parent
+    def __init__(
+        self,
+        env: Tetris,
+        parent: Optional["MonteCarloTreeNode"] = None,
+        prior_probability=0.0
+    ):
+
+        self.env = env
+        self.parent: Optional["MonteCarloTreeNode"] = parent
 
         # Backpropagation statistics
         self.visit_count = 0
@@ -28,7 +37,11 @@ class MonteCarloTreeNode:
         # Prior Q-value will be zero until this node is evaluated.
         self.prior_q_value = 0.0
         self.is_evaluated = False
-        self.children: list[MonteCarloTreeNode] = []
+        # Next states for each stochastic outcome over all possible actions.
+        # The stochastic outcomes are the different tetromino types
+        # that can be spawned after the action is taken.
+        self.children: Dict[int, List['MonteCarloTreeNode']] = defaultdict(list)
+        self.number_of_children = 0
 
     def run_iteration(self):
         """
@@ -42,6 +55,31 @@ class MonteCarloTreeNode:
         leaf_node = self.select()
         q_value = leaf_node.evaluate()
         leaf_node.backpropagate(q_value)
+
+    def _avg_puct_value(self, action: int) -> float:
+        """
+        Calculates the average pUCT value for a given action.
+        """
+        return np.mean(self._puct_value_batch(self.children[action]))
+
+    def _puct_value_batch(self, children: List['MonteCarloTreeNode']) -> np.ndarray:
+        """
+        Calculate the pUCT (Predictor + Upper Confidence Bound for Trees)
+        value for a batch of child nodes.
+        """
+
+        parent_visit_count = self.visit_count
+
+        visit_counts = np.array([child.visit_count for child in children])
+        q_value_sums = np.array([child.q_value_sum for child in children])
+        prior_probabilities = np.array([child.prior_probability for child in children])
+
+        q_value_estimates = np.where(visit_counts > 0, q_value_sums / visit_counts, 0.0)
+
+        puct_values = q_value_estimates + C_PUCT * prior_probabilities \
+            * np.sqrt(parent_visit_count) / (visit_counts + 1)
+
+        return puct_values
 
     def _puct_value(self, child: 'MonteCarloTreeNode') -> float:
         """
@@ -73,9 +111,14 @@ class MonteCarloTreeNode:
         """
         node = self
         # Traverse the tree until reaching a leaf node
-        while len(node.children) > 0:
-            # Select the child with the highest pUCT value
-            node = max(node.children, key=self._puct_value)
+        while node.number_of_children > 0:
+            # Estimate the optimal action by averaging pUCT value over
+            # each stochastic outcome of a given action.
+            action = max(node.children, key=self._avg_puct_value)
+            # Select a random outcome/child node from the best action
+            # each time the tree is traversed, simulating stochasticity
+            # to reduce overfitting to a single path.
+            node = action[np.random.randint(len(action))]
         return node
 
     def nn_evaluation(self):
@@ -84,7 +127,7 @@ class MonteCarloTreeNode:
         """
         # TODO Placeholder neural network call
         # returns a tuple of (Q-value, action_probabilities)
-        return self.model(self.state.grid)
+        return self.model(self.env.grid)
 
     def evaluate(self) -> float:
         """
@@ -97,12 +140,12 @@ class MonteCarloTreeNode:
         # Simulation is skipped
         # Return the actual score as the terminal value
         if self.is_evaluated is True:
-            return self.state.score
+            return self.env.score
 
         # Simulation:
 
         # Generate all legal actions from the current state
-        legal_actions = self.state.get_legal_actions()
+        legal_actions = self.env.get_legal_actions()
         q_value, action_logits = self.nn_evaluation()
         self.prior_q_value = q_value
 
@@ -110,7 +153,7 @@ class MonteCarloTreeNode:
         # been evaluated. Set evaluated to true and return the actual score as the terminal value
         if not legal_actions:
             self.is_evaluated = True
-            return self.state.score
+            return self.env.score
 
         # Expansion:
 
@@ -129,20 +172,27 @@ class MonteCarloTreeNode:
             if not legal_actions[action_index]:
                 continue
 
-            # TODO Handle creating next state
-            next_state = self.state.step(action_index)
-
-            # TODO Handle next Tetromino piece selection
-
+            # The prior probability is the same for all stochastic outcomes
             prior_probability = action_probabilities[action_index]
 
-            child_node = MonteCarloTreeNode(
-                state=next_state,
-                parent=self,
-                prior_probability=prior_probability
-            )
+            copy_env = self.env.copy()
+            copy_env.step(action_index)
 
-            self.children.append(child_node)
+            # Stochastic expansion: iterate over all tetromino types
+            # and create a child node for each legal action
+            # with the corresponding tetromino type
+            for tetromino_type in range(len(Tetromino.figures)):
+
+                copy_env.new_tetromino(tetromino_type)
+
+                child_node = MonteCarloTreeNode(
+                    env=copy_env,
+                    parent=self,
+                    prior_probability=prior_probability
+                )
+
+                self.children[tetromino_type].append(child_node)
+                self.number_of_children += 1
 
         # Mark this node as evaluated
         self.is_evaluated = True

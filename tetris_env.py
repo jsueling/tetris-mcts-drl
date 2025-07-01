@@ -237,17 +237,20 @@ class Tetris:
         rotation, col = divmod(action, self.width)
         self.current_tetromino.spawn(x=col, rotation=rotation) 
         if self.intersects():
-            raise AssertionError("Illegal action: step() called without checking legal actions")
-        self.hard_drop(colour)
+            self.done = True
+        else:
+            self.hard_drop(colour)
+        return self.done, self.score
 
     def reset(self):
-        """Reset the game state to the initial conditions."""
+        """
+        Reset the game state to the initial conditions.
+        """
         self.grid.fill(0)
         self.score = 0
         self.done = False
-        # Generate the first Tetromino of the episode
+        # Generate the first Tetromino of the new episode
         self.new_tetromino(self.get_next_piece(starting_piece=True))
-        return self.current_tetromino.type
 
     def copy(self):
         """Create a deep copy of the current game state."""
@@ -260,3 +263,7 @@ class Tetris:
         if self.tetromino_randomisation_scheme == "bag":
             new_env.bag = self.bag.copy()
         return new_env
+
+    def get_state(self):
+        """Returns a representation of the current game state used by the neural network."""
+        return

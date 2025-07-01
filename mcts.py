@@ -176,7 +176,7 @@ class MonteCarloTreeNode:
             prior_probability = action_probabilities[action_index]
 
             copy_env = self.env.copy()
-            copy_env.step(action_index)
+            _, _ = copy_env.step(action_index)
 
             # Stochastic expansion: iterate over all tetromino types
             # and create a child node for each legal action
@@ -209,7 +209,43 @@ class MonteCarloTreeNode:
             node.q_value_sum += q_value
             node = node.parent
 
-    def detach(self):
-        """Detach this node from its parent, effectively removing it from the tree."""
+    def decide_action(self, tau=1.0):
+        """
+        Decide on the best action to take based on the visit counts of immediate child nodes
+        over all iterations of MCTS in this episode.
+        Arguments:
+        - tau: Temperature parameter for softmax action selection.
+        This parameter modulates exploration vs exploitation in the action selection
+        of the actual game.
+        Returns:
+        - action: The selected action based on the visit counts.
+        - tree_policy: The policy vector for the tree in this state, representing the
+        probabilities of selecting each action derived from the average visit count of each
+        stochastic outcome.
+        """
+
+        # Sum the visit counts over all stochastic outcomes of each action
+        action_visit_counts = {
+            action: sum(child.visit_count for child in self.children[action])
+            for action in self.children
+        }
+
+        if tau == 1e-5:
+            # If tau is at minimum, select actions greedily by the maximum visit count
+            action = max(action_visit_counts, key=action_visit_counts.get)
+            return action
+
+        actions, visit_counts = zip(*action_visit_counts.items())
+        visit_counts = np.array(visit_counts)
+        visit_counts = np.exp(visit_counts / tau)
+        probs = visit_counts / np.sum(visit_counts)
+        action = np.random.choice(actions, p=probs)
+        tree_policy = np.array([0.0] * ACTION_SPACE)
+        tree_policy[actions] = probs
+
+        return action, tree_policy
+
+    def remove_parent(self):
+        """Detach the parent from the tree"""
         del self.parent
         self.parent = None

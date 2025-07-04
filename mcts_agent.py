@@ -1,46 +1,81 @@
 """MCTS + DRL agent that learns how to play Tetris"""
 
+import torch
+import numpy as np
 from tqdm import tqdm
 
 from mcts import MonteCarloTreeNode
 from experience_replay_buffer import ExperienceReplayBuffer
 from tetris_env import Tetris
+from model import ResNet, ResidualBlock
 
 MCTS_ITERATIONS = 800 # Number of MCTS iterations per action selection
+ACTION_SPACE = 40 # Upper bound on possible actions for hard drop (rotations * placements)
+BATCH_SIZE = 128 # Batch size for experience replay
 
 class MCTSAgent:
     """MCTS + DRL agent for playing Tetris."""
-    def __init__(self):
-        self.buffer = ExperienceReplayBuffer(batch_size=128, max_size=1000000)
-
-    def sample_replay_buffer(self):
-        """Sample a batch of transitions from the replay buffer."""
-        return self.buffer.sample()
+    def __init__(self, batch_size=BATCH_SIZE):
+        self.buffer = ExperienceReplayBuffer(batch_size=batch_size, max_size=1e6)
+        self.model = ResNet(ResidualBlock, [2, 2, 2, 2], ACTION_SPACE)
+        self.batch_size = batch_size
+        self.env = Tetris()
 
     def update(self):
-        pass
+        """Update the agent's model via experience replay"""
 
-    def train(self, episodes=1000, tetromino_randomisation_scheme=None):
+        batch = self.buffer.sample()
+        batch_size = len(batch)
+        device = self.model.device
+
+        # (grids, tetromino_types), tree_policies, values = zip(*batch)
+        states, tree_policies, actual_rewards = zip(*batch)
+        grids, tetromino_types = zip(*states)
+        grids = torch.tensor(grids, dtype=torch.float32).to(device)
+        tetrominoes_one_hot = torch.zeros((batch_size, 7), dtype=torch.float32).to(device)
+        tetrominoes_one_hot[torch.arange(batch_size), tetromino_types] = 1.0
+        tree_policies = torch.tensor(tree_policies, dtype=torch.float32).to(device)
+        actual_rewards = torch.tensor(actual_rewards, dtype=torch.float32).to(device)
+
+        legal_actions_masks = []
+        temp_env = Tetris()
+        for grid, tetromino_type in zip(grids, tetromino_types):
+            np.copyto(temp_env.grid, grid)
+            temp_env.new_tetromino(tetromino_type)
+            mask = temp_env.get_legal_actions()
+            legal_actions_masks.append(mask)
+        legal_actions_masks = np.stack(legal_actions_masks)
+
+        self.model.train()
+        self.model.optimiser.zero_grad()
+        loss = self.model.loss(
+            grids,
+            tetrominoes_one_hot,
+            tree_policies,
+            legal_actions_masks,
+            actual_rewards
+        )
+        loss.backward()
+        self.model.optimiser.step()
+
+    def train(self, episodes=1000):
         """Run the training loop for the MCTS agent."""
 
-        if tetromino_randomisation_scheme not in ['bag', 'uniform']:
-            raise ValueError("tetromino_randomisation_scheme must be 'bag' or 'uniform'")
-
-        env = Tetris(20, 10, tetromino_randomisation_scheme)
+        step_count = 0
+        scores = []
 
         for episode in tqdm(range(episodes)):
 
             # Create a new root node for the MCTS search tree per episode
-            root_node = MonteCarloTreeNode(env)
+            root_node = MonteCarloTreeNode(self.env)
 
             # Reset the environment per episode, generating the first Tetromino of the sequence
-            env.reset()
+            self.env.reset()
             transitions = []
             done = False
             while not done:
 
-                # TODO Finalise a state representation used for the neural network
-                state = env.get_state()
+                state = self.env.get_state()
 
                 for _ in range(MCTS_ITERATIONS):
                     root_node.run_iteration()
@@ -50,12 +85,12 @@ class MCTSAgent:
                 # probability distribution over those actions
                 action, tree_policy = root_node.decide_action(tau=1.0)
 
-                done, current_score = env.step(action)
+                done, current_score = self.env.step(action)
 
                 # Stochastic outcome becomes deterministic by setting the next piece
                 # from the actual environment.
-                next_tetromino_type = env.get_next_piece()
-                env.new_tetromino(next_tetromino_type)
+                next_tetromino_type = self.env.get_next_piece()
+                self.env.new_tetromino(next_tetromino_type)
                 # Rebase the root node to the new state after the action is taken
                 # and the next Tetromino is set.
                 rebased_root = root_node.children[action][next_tetromino_type]
@@ -66,9 +101,18 @@ class MCTSAgent:
 
                 transitions.append([state, tree_policy, current_score])
 
+                if (step_count > 1e5) and (step_count % self.batch_size == 0):
+                    self.update()
+
+                step_count += 1
+
             # An episode has ended, we can now compute the return-to-go (RTG)
             # by subtracting the final score from each transition's current total reward (score)
-            final_score = env.score
+            final_score = self.env.score
+            scores.append(final_score)
+            if (episode + 1) % 10 == 0:
+                avg_score = sum(scores[-10:]) / 10
+                print(f"Episode {episode+1}, Average Score (last 10): {avg_score}")
             for t in transitions:
                 t[2] = final_score - t[2]
 

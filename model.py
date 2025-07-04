@@ -49,6 +49,15 @@ class ResNet(nn.Module):
             nn.Linear(256, 1)
         )
 
+        self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-5)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimiser,
+            patience=3,
+            factor=0.5
+        )
+
+        self.mse_loss = nn.MSELoss()
+
     def _make_layer(self, block, output_channels, blocks, stride=1):
         downsample = None
         if stride != 1 or self.input_channels != output_channels:
@@ -64,13 +73,8 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, grid, tetromino, training=False):
+    def forward(self, grid, tetromino):
         """Forward pass through the ResNet model."""
-
-        if training:
-            self.train()
-        else:
-            self.eval()
 
         x = self.conv1(grid)
         x = self.residual_blocks(x)
@@ -82,6 +86,33 @@ class ResNet(nn.Module):
         p, v = self.policy_head(combined_features), self.value_head(combined_features)
 
         return p, v
+
+    def loss(
+            self,
+            grids,
+            tetrominoes_one_hot,
+            tree_policies,
+            legal_action_masks,
+            ground_truth_values
+        ):
+        """
+        Compute the loss for the model. This consists of cross-entropy loss
+        between the tree policies and the predicted action probabilities,
+        and mean squared error loss between the predicted values and ground truth values.
+        """
+        # Add channel dimension for Conv2d
+        grids = grids.unsqueeze(1)
+        # Forward pass through the model to get predicted action logits and values
+        predicted_action_logits, predicted_values = self.forward(grids, tetrominoes_one_hot)
+        # Apply legal action masks to the predicted action logits in-place
+        predicted_action_logits.masked_fill_(legal_action_masks == 0, float("-inf"))
+        # Compute the log probabilities of the predicted actions
+        predicted_log_probs = torch.log_softmax(predicted_action_logits, dim=1)
+        # The policy loss is the negative log likelihood of the tree policies
+        policy_loss = -(tree_policies * predicted_log_probs).sum(dim=1).mean()
+        # The value loss is the mean squared error between predicted values and ground truth values
+        value_loss = self.mse_loss(predicted_values, ground_truth_values)
+        return policy_loss + value_loss
 
 class ResidualBlock(nn.Module):
     """A residual block for the ResNet model."""
@@ -109,7 +140,3 @@ class ResidualBlock(nn.Module):
         out += residual
         out = self.relu(out)
         return out
-
-# ACTION_SPACE = 40
-# # ResNet-18
-# model = ResNet(ResidualBlock, [2, 2, 2, 2], ACTION_SPACE)

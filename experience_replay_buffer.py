@@ -11,7 +11,7 @@ class ExperienceReplayBuffer:
     """An experience replay buffer that stores transitions and supports uniform random sampling."""
     def __init__(
         self,
-        max_size: int = 1000000,
+        max_size: int = 1e6,
         batch_size: int = BATCH_SIZE,
         device: torch.device = DEVICE,
     ):

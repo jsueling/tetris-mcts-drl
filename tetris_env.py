@@ -76,7 +76,12 @@ class Tetris:
     Represents the Tetris game state,
     including the grid, current tetromino, score, and game state.
     """
-    def __init__(self, height: int, width: int, tetromino_randomisation_scheme: str = "uniform"):
+    def __init__(
+        self,
+        height: int=20,
+        width: int=10,
+        tetromino_randomisation_scheme: str="uniform"
+    ):
 
         self.current_tetromino = None
         self.height = height
@@ -163,14 +168,19 @@ class Tetris:
             self.score += broken_lines
 
     def hard_drop(self, colour=1):
-        """Move the current figure directly down to the bottom of the grid."""
+        """
+        Move the current Tetromino directly down to the bottom of the grid.
+        After the hard drop, the Tetromino is removed from the game state,
+        indicating a new Tetromino should be instantiated.
+        """
         while not self.intersects():
             self.current_tetromino.y += 1
         self.current_tetromino.y -= 1
         self.freeze(colour)
+        self.current_tetromino = None
 
     def freeze(self, colour):
-        """Freeze the current figure, it now becomes part of the grid."""
+        """Freeze the current Tetromino, it now becomes part of the grid."""
         x, y = self.current_tetromino.x, self.current_tetromino.y
         for cell_index in self.current_tetromino.image():
             tetromino_row = y + (cell_index // 4)
@@ -235,10 +245,11 @@ class Tetris:
         - The second digit is the column (0-9).
         """
         rotation, col = divmod(action, self.width)
-        self.current_tetromino.spawn(x=col, rotation=rotation) 
+        self.current_tetromino.spawn(x=col, rotation=rotation)
         if self.intersects():
             self.done = True
         else:
+            # Current Tetromino is placed and removed from the game state
             self.hard_drop(colour)
         return self.done, self.score
 
@@ -265,5 +276,13 @@ class Tetris:
         return new_env
 
     def get_state(self):
-        """Returns a representation of the current game state used by the neural network."""
-        return
+        """
+        Returns a representation of the current game state used by the neural network.
+        The state is a tuple containing:
+        - The current grid representation
+        - The current Tetromino type
+        """
+        grid_copy = np.zeros((self.height, self.width), dtype=int)
+        np.copyto(grid_copy, self.grid)
+
+        return grid_copy, self.current_tetromino.type

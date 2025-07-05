@@ -16,24 +16,27 @@ BATCH_SIZE = 128 # Batch size for experience replay
 class MCTSAgent:
     """MCTS + DRL agent for playing Tetris."""
     def __init__(self, batch_size=BATCH_SIZE):
-        self.buffer = ExperienceReplayBuffer(batch_size=batch_size, max_size=1e6)
         self.model = ResNet(ResidualBlock, [2, 2, 2, 2], ACTION_SPACE)
+        self.buffer = ExperienceReplayBuffer(
+            batch_size=batch_size,
+            max_size=1e6,
+            device=self.model.device
+        )
         self.batch_size = batch_size
         self.env = Tetris()
 
     def update(self):
         """Update the agent's model via experience replay"""
 
-        batch = self.buffer.sample()
-        batch_size = len(batch)
+        xp_batch = self.buffer.sample()
         device = self.model.device
 
         # (grids, tetromino_types), tree_policies, values = zip(*batch)
-        states, tree_policies, actual_rewards = zip(*batch)
+        states, tree_policies, actual_rewards = zip(*xp_batch)
         grids, tetromino_types = zip(*states)
         grids = torch.tensor(grids, dtype=torch.float32).to(device)
-        tetrominoes_one_hot = torch.zeros((batch_size, 7), dtype=torch.float32).to(device)
-        tetrominoes_one_hot[torch.arange(batch_size), tetromino_types] = 1.0
+        tetrominoes_one_hot = torch.zeros((self.batch_size, 7), dtype=torch.float32).to(device)
+        tetrominoes_one_hot[torch.arange(self.batch_size), tetromino_types] = 1.0
         tree_policies = torch.tensor(tree_policies, dtype=torch.float32).to(device)
         actual_rewards = torch.tensor(actual_rewards, dtype=torch.float32).to(device)
 
@@ -41,7 +44,7 @@ class MCTSAgent:
         temp_env = Tetris()
         for grid, tetromino_type in zip(grids, tetromino_types):
             np.copyto(temp_env.grid, grid)
-            temp_env.new_tetromino(tetromino_type)
+            temp_env.create_tetromino(tetromino_type)
             mask = temp_env.get_legal_actions()
             legal_actions_masks.append(mask)
         legal_actions_masks = np.stack(legal_actions_masks)
@@ -64,10 +67,11 @@ class MCTSAgent:
         step_count = 0
         scores = []
 
-        for episode in tqdm(range(episodes)):
+        for episode in range(episodes):
 
-            # Create a new root node for the MCTS search tree per episode
-            root_node = MonteCarloTreeNode(self.env)
+            # Create a new root node for the MCTS search tree per episode.
+            # Since Tetromino generation is stochastic, the old tree must be discarded.
+            root_node = MonteCarloTreeNode(env=self.env, model=self.model)
 
             # Reset the environment per episode, generating the first Tetromino of the sequence
             self.env.reset()
@@ -77,7 +81,10 @@ class MCTSAgent:
 
                 state = self.env.get_state()
 
-                for _ in range(MCTS_ITERATIONS):
+                for mcts_iteration in tqdm(
+                    range(MCTS_ITERATIONS),
+                    desc=f"{episode}, {mcts_iteration}"
+                ):
                     root_node.run_iteration()
 
                 # The next action is decided based on the visit counts of the actions
@@ -87,17 +94,8 @@ class MCTSAgent:
 
                 done, current_score = self.env.step(action)
 
-                # Stochastic outcome becomes deterministic by setting the next piece
-                # from the actual environment.
-                next_tetromino_type = self.env.get_next_piece()
-                self.env.new_tetromino(next_tetromino_type)
-                # Rebase the root node to the new state after the action is taken
-                # and the next Tetromino is set.
-                rebased_root = root_node.children[action][next_tetromino_type]
-                # Remove parent node so that the search can continue from the new state
-                # reusing previously computed statistics.
-                rebased_root.remove_parent()
-                root_node = rebased_root
+                # Actual environment randomly generates the next Tetromino
+                self.env.create_tetromino(self.env.generate_next_tetromino_type())
 
                 transitions.append([state, tree_policy, current_score])
 

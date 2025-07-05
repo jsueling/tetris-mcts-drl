@@ -4,16 +4,13 @@ import random
 
 import torch
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-BATCH_SIZE = 128
-
 class ExperienceReplayBuffer:
     """An experience replay buffer that stores transitions and supports uniform random sampling."""
     def __init__(
         self,
         max_size: int = 1e6,
-        batch_size: int = BATCH_SIZE,
-        device: torch.device = DEVICE,
+        batch_size: int = 128,
+        device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     ):
         self.max_size = max_size
         self.batch_size = batch_size
@@ -22,7 +19,7 @@ class ExperienceReplayBuffer:
         self.position = 0
 
         # The buffer will store transitions in the form of tuples:
-        # 1. State will be (grid + piece type)
+        # 1. State will be (grid + tetromino type)
         # 2. Tree policy derived from MCTS associated with the state
         # 3. Value for the state calculated as
         # reward to go when an actual game ends (end_score - current_score)

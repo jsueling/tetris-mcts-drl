@@ -4,6 +4,7 @@ Adapted from: https://github.com/corentinpla/Learning-Tetris-Using-the-Noisy-Cro
 """
 
 import random
+from typing import Optional
 
 import numpy as np
 
@@ -104,27 +105,36 @@ class Tetris:
             grid_repr.append("".join(str(self.grid[row][col]) for col in range(self.width)))
         return "\n".join(grid_repr)
 
-    def new_tetromino(self, tetromino_type: int):
-        """Creates a new unspawned Tetromino of tetromino_type."""
+    def create_tetromino(self, tetromino_type: int) -> None:
+        """Creates a new unspawned Tetromino of tetromino_type attached to this game state."""
         self.current_tetromino = Tetromino(tetromino_type)
 
-    def get_next_piece(self, starting_piece=False):
+    def get_current_tetromino_type(self) -> Optional[int]:
         """
-        Returns the next piece type based on the randomisation scheme.
-        For "uniform", it returns a random piece type.
-        For "bag", it returns a piece type from a bag containing each
+        Returns the type of the current Tetromino.
+        If no Tetromino is currently active, returns None.
+        """
+        if self.current_tetromino:
+            return self.current_tetromino.type
+        return None
+
+    def generate_next_tetromino_type(self, is_first_tetromino=False) -> int:
+        """
+        Generates the next Tetromino type based on the randomisation scheme.
+        For "uniform", it returns a random Tetromino type.
+        For "bag", it returns a Tetromino type from a bag containing each
         Tetromino in a random order, refilling and reshuffling it when empty.
         """
 
         if self.tetromino_randomisation_scheme == "uniform":
-            # Randomly select a piece type uniformly
+            # Randomly select a Tetromino type uniformly
             return random.randint(0, 6)
 
         if self.tetromino_randomisation_scheme == "bag":
 
-            # If it's the first piece of the episode
+            # If this is the first Tetromino of the episode
             # or the bag is empty, refill and shuffle it
-            if starting_piece or not self.bag:
+            if is_first_tetromino or not self.bag:
                 self.bag = list(range(len(Tetromino.figures)))
                 random.shuffle(self.bag)
             return self.bag.pop()
@@ -170,8 +180,7 @@ class Tetris:
     def hard_drop(self, colour=1):
         """
         Move the current Tetromino directly down to the bottom of the grid.
-        After the hard drop, the Tetromino is removed from the game state,
-        indicating a new Tetromino should be instantiated.
+        After the hard drop, the Tetromino is removed from the game state.
         """
         while not self.intersects():
             self.current_tetromino.y += 1
@@ -217,18 +226,24 @@ class Tetris:
         Redundant rotations are also masked to avoid unnecessary actions.
         """
 
-        legal_actions = [False] * (self.width * 4)
+        max_rotations = 4
+        max_columns = self.width
+
+        # All actions are initially illegal. Actions are represented
+        # as indices in base max_columns as rotation * max_columns + column
+        # where rotation is in [0, 3] and column is in [0, 9]
+        legal_actions = np.array([False] * (max_columns * max_rotations))
 
         # Get the number of unique rotations for the current Tetromino
         # since Tetrominoes have symmetric rotations.
         unique_rotations = len(Tetromino.figures[self.current_tetromino.type])
 
         for rotation in range(unique_rotations):
-            for col in range(self.width):
+            for col in range(max_columns):
                 # Try to spawn the Tetromino in the specified column and rotation
                 self.current_tetromino.spawn(x=col, rotation=rotation)
                 if not self.intersects():
-                    legal_actions[rotation * self.width + col] = True
+                    legal_actions[rotation * max_columns + col] = True
 
         # Despawn the Tetromino after checking all legal actions
         # to ensure the state is clean for the next action
@@ -261,7 +276,9 @@ class Tetris:
         self.score = 0
         self.done = False
         # Generate the first Tetromino of the new episode
-        self.new_tetromino(self.get_next_piece(starting_piece=True))
+        self.create_tetromino(
+            self.generate_next_tetromino_type(is_first_tetromino=True)
+        )
 
     def copy(self):
         """Create a deep copy of the current game state."""

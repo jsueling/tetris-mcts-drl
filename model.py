@@ -8,9 +8,11 @@ produce action probabilities and state values.
 import torch
 from torch import nn
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class ResNet(nn.Module):
     """Residual neural network for Tetris."""
-    def __init__(self, block, layers, num_actions, num_channels=64):
+    def __init__(self, block, layers, num_actions, num_channels=64, device=DEVICE):
         super(ResNet, self).__init__()
         self.input_channels = num_channels
         self.conv1 = nn.Sequential(
@@ -48,6 +50,9 @@ class ResNet(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 1)
         )
+
+        self.device = device
+        self.to(device)
 
         self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-5)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(

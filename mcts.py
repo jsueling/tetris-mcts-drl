@@ -1,8 +1,8 @@
 """Monte Carlo Tree Search (MCTS) algorithm implementation."""
 
-from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
+import torch
 import numpy as np
 
 from tetris_env import Tetris, Tetromino
@@ -20,11 +20,13 @@ class MonteCarloTreeNode:
         self,
         env: Tetris,
         parent: Optional["MonteCarloTreeNode"] = None,
-        prior_probability=0.0
+        prior_probability=0.0,
+        model=None
     ):
 
         self.env = env
         self.parent: Optional["MonteCarloTreeNode"] = parent
+        self.model = model
 
         # Backpropagation statistics
         self.visit_count = 0
@@ -35,13 +37,10 @@ class MonteCarloTreeNode:
         # during this node's instantiation
         self.prior_probability = prior_probability
         # Prior Q-value will be zero until this node is evaluated.
-        self.prior_q_value = 0.0
+        self.q_value = 0.0
         self.is_evaluated = False
-        # Next states for each stochastic outcome over all possible actions.
-        # The stochastic outcomes are the different tetromino types
-        # that can be spawned after the action is taken.
-        self.children: Dict[int, List['MonteCarloTreeNode']] = defaultdict(list)
-        self.number_of_children = 0
+
+        self.children: Dict[int, 'MonteCarloTreeNode'] = {}
 
     def run_iteration(self):
         """
@@ -56,38 +55,18 @@ class MonteCarloTreeNode:
         q_value = leaf_node.evaluate()
         leaf_node.backpropagate(q_value)
 
-    def _avg_puct_value(self, action: int) -> float:
+    def get_best_child_by_puct(self) -> 'MonteCarloTreeNode':
         """
-        Calculates the average pUCT value for a given action.
+        Returns this node's child with the maximum pUCT value
+        (Predictor + Upper Confidence Bound for Trees),
+        normalising q-value estimates into the range [0, 1].
         """
-        return np.mean(self._puct_value_batch(self.children[action]))
-
-    def _puct_value_batch(self, children: List['MonteCarloTreeNode']) -> np.ndarray:
-        """
-        Calculate the pUCT (Predictor + Upper Confidence Bound for Trees)
-        value for a batch of child nodes.
-        """
-
         parent_visit_count = self.visit_count
+        children = list(self.children.values())
 
         visit_counts = np.array([child.visit_count for child in children])
         q_value_sums = np.array([child.q_value_sum for child in children])
         prior_probabilities = np.array([child.prior_probability for child in children])
-
-        q_value_estimates = np.where(visit_counts > 0, q_value_sums / visit_counts, 0.0)
-
-        puct_values = q_value_estimates + C_PUCT * prior_probabilities \
-            * np.sqrt(parent_visit_count) / (visit_counts + 1)
-
-        return puct_values
-
-    def _puct_value(self, child: 'MonteCarloTreeNode') -> float:
-        """
-        Calculate the pUCT (Predictor + Upper Confidence Bound for Trees) value
-        for a given node.
-        """
-
-        parent_visit_count = self.visit_count
 
         # q_value is an estimate of the expected value of the action,
         # where the child node represents the state immediately following
@@ -95,14 +74,22 @@ class MonteCarloTreeNode:
         # of observed q_values. As visit_count increases, q_values should
         # converge to a more accurate estimate of the true value. If child
         # node has not been visited, its q_value is 0 (i.e. not evaluated yet).
-        q_value_estimate = (child.q_value_sum / child.visit_count) if child.visit_count > 0 else 0.0
+        q_value_estimates = np.where(visit_counts > 0, q_value_sums / visit_counts, 0.0)
+
+        # Normalise q_value_estimates to [0, 1] range since the network outputs
+        # raw game scores (lines cleared) which must be normalised for balance
+        # between exploration and exploitation terms.
+        max_q_value_estimate = np.max(q_value_estimates)
+        min_q_value_estimate = np.min(q_value_estimates)
+        q_value_estimates_normalised = (q_value_estimates - min_q_value_estimate) \
+            / (max_q_value_estimate - min_q_value_estimate + 1e-8)
 
         # Balance exploration and exploitation using the modified pUCT formula:
         # Q(s, a) + c_puct * P(s, a) * sqrt(∑_b N(s, b)) / (N(s, a) + 1)
-        puct_value = q_value_estimate + C_PUCT * child.prior_probability \
-            * np.sqrt(parent_visit_count) / (child.visit_count + 1)
+        puct_values = q_value_estimates_normalised + C_PUCT * prior_probabilities \
+            * np.sqrt(parent_visit_count) / (visit_counts + 1)
 
-        return puct_value
+        return children[np.argmax(puct_values)]
 
     def select(self) -> 'MonteCarloTreeNode':
         """
@@ -111,23 +98,32 @@ class MonteCarloTreeNode:
         """
         node = self
         # Traverse the tree until reaching a leaf node
-        while node.number_of_children > 0:
-            # Estimate the optimal action by averaging pUCT value over
-            # each stochastic outcome of a given action.
-            action = max(node.children, key=self._avg_puct_value)
-            # Select a random outcome/child node from the best action
-            # each time the tree is traversed, simulating stochasticity
-            # to reduce overfitting to a single path.
-            node = action[np.random.randint(len(action))]
+        while len(node.children) > 0:
+            node = node.get_best_child_by_puct()
         return node
 
     def nn_evaluation(self):
         """
-        Use Neural Network to evaluate the current state
+        This method uses a dual-headed neural network to evaluate the current state.
+        Returns:
+        - value: The estimated value of the current state.
+        - policy_logits: The logits for the action probabilities.
         """
-        # TODO Placeholder neural network call
-        # returns a tuple of (Q-value, action_probabilities)
-        return self.model(self.env.grid)
+        self.model.eval()
+        with torch.no_grad():
+            grid_tensor = torch.tensor(
+                self.env.grid,
+                dtype=torch.float32
+            ).unsqueeze(0).to(self.model.device)
+            tetromino_type = self.env.get_current_tetromino_type()
+            tetromino_one_hot = torch.zeros(
+                (len(Tetromino.figures),),
+                dtype=torch.float32
+            ).to(self.model.device)
+            tetromino_one_hot[tetromino_type] = 1.0
+            # Forward pass through the neural network
+            policy_logits, value = self.model(grid_tensor, tetromino_one_hot)
+        return policy_logits, value
 
     def evaluate(self) -> float:
         """
@@ -146,14 +142,15 @@ class MonteCarloTreeNode:
 
         # Generate all legal actions from the current state
         legal_actions = self.env.get_legal_actions()
-        q_value, action_logits = self.nn_evaluation()
-        self.prior_q_value = q_value
 
         # Tree policy has reached a leaf node which is terminal but has not yet
         # been evaluated. Set evaluated to true and return the actual score as the terminal value
-        if not legal_actions:
+        if not np.any(legal_actions):
             self.is_evaluated = True
             return self.env.score
+
+        # Evaluate as late as possible before expansion
+        action_logits, q_value = self.nn_evaluation()
 
         # Expansion:
 
@@ -167,32 +164,29 @@ class MonteCarloTreeNode:
         # Apply softmax to action logits to get action probabilities
         action_probabilities = exponential_action_logits / np.sum(exponential_action_logits)
 
+        # Determinise the generation of the next Tetromino for all child nodes.
+        # This means all actions share the same stochastic outcome once the node is evaluated.
+        next_tetromino_type = self.env.generate_next_tetromino_type()
+
         for action_index in range(ACTION_SPACE):
 
             if not legal_actions[action_index]:
                 continue
 
-            # The prior probability is the same for all stochastic outcomes
-            prior_probability = action_probabilities[action_index]
-
             copy_env = self.env.copy()
+            # Place last Tetromino in the copied environment
             _, _ = copy_env.step(action_index)
+            # Create the next Tetromino after the last Tetromino was placed
+            copy_env.create_tetromino(next_tetromino_type)
 
-            # Stochastic expansion: iterate over all tetromino types
-            # and create a child node for each legal action
-            # with the corresponding tetromino type
-            for tetromino_type in range(len(Tetromino.figures)):
+            child_node = MonteCarloTreeNode(
+                env=copy_env,
+                parent=self,
+                prior_probability=action_probabilities[action_index],
+                model=self.model
+            )
 
-                copy_env.new_tetromino(tetromino_type)
-
-                child_node = MonteCarloTreeNode(
-                    env=copy_env,
-                    parent=self,
-                    prior_probability=prior_probability
-                )
-
-                self.children[tetromino_type].append(child_node)
-                self.number_of_children += 1
+            self.children[action_index] = child_node
 
         # Mark this node as evaluated
         self.is_evaluated = True
@@ -204,6 +198,9 @@ class MonteCarloTreeNode:
         traversing parent nodes until reaching the root node.
         """
         node = self
+        # Set initial Q-value for the node being evaluated
+        node.q_value = q_value
+        # Backpropagate the Q-value sums and visit count to all parent nodes
         while node is not None:
             node.visit_count += 1
             node.q_value_sum += q_value
@@ -211,8 +208,7 @@ class MonteCarloTreeNode:
 
     def decide_action(self, tau=1.0):
         """
-        Decide on the best action to take based on the visit counts of immediate child nodes
-        over all iterations of MCTS in this episode.
+        Decide on the best action to take based on the visit counts of immediate child nodes.
         Arguments:
         - tau: Temperature parameter for softmax action selection.
         This parameter modulates exploration vs exploitation in the action selection
@@ -220,32 +216,27 @@ class MonteCarloTreeNode:
         Returns:
         - action: The selected action based on the visit counts.
         - tree_policy: The policy vector for the tree in this state, representing the
-        probabilities of selecting each action derived from the average visit count of each
-        stochastic outcome.
+        probabilities of selecting each action derived from visit counts of the tree search.
         """
 
-        # Sum the visit counts over all stochastic outcomes of each action
-        action_visit_counts = {
-            action: sum(child.visit_count for child in self.children[action])
-            for action in self.children
-        }
-
         if tau == 1e-5:
-            # If tau is at minimum, select actions greedily by the maximum visit count
-            action = max(action_visit_counts, key=action_visit_counts.get)
-            return action
+            # If tau is at minimum, select action greedily by the maximum visit count
+            action = max(self.children, key=lambda action: self.children[action].visit_count)
+            tree_policy = np.zeros(ACTION_SPACE)
+            tree_policy[action] = 1.0
+            return action, tree_policy
 
-        actions, visit_counts = zip(*action_visit_counts.items())
-        visit_counts = np.array(visit_counts)
-        visit_counts = np.exp(visit_counts / tau)
-        probs = visit_counts / np.sum(visit_counts)
-        action = np.random.choice(actions, p=probs)
-        tree_policy = np.array([0.0] * ACTION_SPACE)
-        tree_policy[actions] = probs
+        actions = list(self.children.keys())
+        visit_counts = np.array([child.visit_count for child in self.children.values()])
+
+        # Normalise visit counts using softmax with temperature tau
+        visit_counts = visit_counts ** (1 / tau)
+        visit_probs = visit_counts / np.sum(visit_counts)
+        # Select an action based on the probabilities derived from visit counts
+        action = np.random.choice(actions, p=visit_probs)
+        # Create a tree policy vector representing the probabilities of selecting each action
+        # informed by the visit counts of the tree search
+        tree_policy = np.zeros(ACTION_SPACE)
+        tree_policy[actions] = visit_probs
 
         return action, tree_policy
-
-    def remove_parent(self):
-        """Detach the parent from the tree"""
-        del self.parent
-        self.parent = None

@@ -87,7 +87,7 @@ class Tetris:
         self.current_tetromino = None
         self.height = height
         self.width = width
-        self.grid = np.zeros((height, width), dtype=int)
+        self.grid = np.zeros((height, width), dtype=np.float32)
         self.score = 0
         self.done = False
 
@@ -171,7 +171,7 @@ class Tetris:
         if broken_lines > 0:
             self.grid = np.vstack((
                 # Add empty rows at the top to replace the broken lines
-                np.zeros((broken_lines, self.width), dtype=int),
+                np.zeros((broken_lines, self.width), dtype=np.float32),
                 # Keep only rows that were not filled (maintains ordering)
                 self.grid[~filled_lines]
             ))
@@ -283,11 +283,11 @@ class Tetris:
     def copy(self):
         """Create a deep copy of the current game state."""
         new_env = Tetris(self.height, self.width, self.tetromino_randomisation_scheme)
-        new_env.grid = np.copyto(new_env.grid, self.grid)
+        np.copyto(new_env.grid, self.grid)
         new_env.score = self.score
         new_env.done = self.done
         if self.current_tetromino:
-            new_env.current_tetromino = Tetromino(self.current_tetromino.type)
+            new_env.create_tetromino(self.get_current_tetromino_type())
         if self.tetromino_randomisation_scheme == "bag":
             new_env.bag = self.bag.copy()
         return new_env
@@ -299,7 +299,7 @@ class Tetris:
         - The current grid representation
         - The current Tetromino type
         """
-        grid_copy = np.zeros((self.height, self.width), dtype=int)
+        grid_copy = np.zeros((self.height, self.width), dtype=np.float32)
         np.copyto(grid_copy, self.grid)
 
-        return grid_copy, self.current_tetromino.type
+        return grid_copy, self.get_current_tetromino_type()

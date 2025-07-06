@@ -79,7 +79,10 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, grid, tetromino):
-        """Forward pass through the ResNet model."""
+        """
+        Forward pass through the ResNet model. Returns policy logits and value prediction
+        for a given state (grid + tetromino).
+        """
 
         x = self.conv1(grid)
         x = self.residual_blocks(x)
@@ -88,9 +91,10 @@ class ResNet(nn.Module):
         grid_features = torch.flatten(x, 1)
         combined_features = torch.cat([grid_features, tetromino], dim=1)
 
-        p, v = self.policy_head(combined_features), self.value_head(combined_features)
+        policy_prediction = self.policy_head(combined_features)
+        value_prediction = self.value_head(combined_features)
 
-        return p, v
+        return policy_prediction, value_prediction
 
     def loss(
             self,
@@ -109,8 +113,9 @@ class ResNet(nn.Module):
         grids = grids.unsqueeze(1)
         # Forward pass through the model to get predicted action logits and values
         predicted_action_logits, predicted_values = self.forward(grids, tetrominoes_one_hot)
-        # Apply legal action masks to the predicted action logits in-place
-        predicted_action_logits.masked_fill_(legal_action_masks == 0, float("-inf"))
+        # Apply legal action masks to the predicted action logits before softmax
+        mask_legal = legal_action_masks == 0
+        predicted_action_logits[mask_legal] = -torch.inf
         # Compute the log probabilities of the predicted actions
         predicted_log_probs = torch.log_softmax(predicted_action_logits, dim=1)
         # The policy loss is the negative log likelihood of the tree policies

@@ -10,7 +10,7 @@ from tetris_env import Tetris
 from model import ResNet, ResidualBlock
 
 MCTS_ITERATIONS = 800 # Number of MCTS iterations per action selection
-ACTION_SPACE = 40 # Upper bound on possible actions for hard drop (rotations * placements)
+ACTION_SPACE = 40 # Upper bound on possible actions for hard drop (rotations * columns placements)
 BATCH_SIZE = 128 # Batch size for experience replay
 
 class MCTSAgent:
@@ -31,9 +31,10 @@ class MCTSAgent:
         xp_batch = self.buffer.sample()
         device = self.model.device
 
-        # (grids, tetromino_types), tree_policies, values = zip(*batch)
         states, tree_policies, actual_rewards = zip(*xp_batch)
         grids, tetromino_types = zip(*states)
+        grids = np.array(grids)
+        tree_policies = np.array(tree_policies)
         grids = torch.tensor(grids, dtype=torch.float32).to(device)
         tetrominoes_one_hot = torch.zeros((self.batch_size, 7), dtype=torch.float32).to(device)
         tetrominoes_one_hot[torch.arange(self.batch_size), tetromino_types] = 1.0
@@ -67,11 +68,7 @@ class MCTSAgent:
         step_count = 0
         scores = []
 
-        for episode in range(episodes):
-
-            # Create a new root node for the MCTS search tree per episode.
-            # Since Tetromino generation is stochastic, the old tree must be discarded.
-            root_node = MonteCarloTreeNode(env=self.env, model=self.model)
+        for episode in tqdm(range(episodes)):
 
             # Reset the environment per episode, generating the first Tetromino of the sequence
             self.env.reset()
@@ -79,12 +76,13 @@ class MCTSAgent:
             done = False
             while not done:
 
+                # Since Tetromino generation is stochastic, the old tree must be discarded
+                # after each step in the actual environment.
+                root_node = MonteCarloTreeNode(env=self.env.copy(), model=self.model)
+
                 state = self.env.get_state()
 
-                for mcts_iteration in tqdm(
-                    range(MCTS_ITERATIONS),
-                    desc=f"{episode}, {mcts_iteration}"
-                ):
+                for _ in range(MCTS_ITERATIONS):
                     root_node.run_iteration()
 
                 # The next action is decided based on the visit counts of the actions
@@ -92,25 +90,38 @@ class MCTSAgent:
                 # probability distribution over those actions
                 action, tree_policy = root_node.decide_action(tau=1.0)
 
-                done, current_score = self.env.step(action)
+                # If the action is -1, no legal actions are available
+                if action == -1:
+                    done, current_score = True, self.env.score
+                else:
+                    done, current_score = self.env.step(action)
 
                 # Actual environment randomly generates the next Tetromino
                 self.env.create_tetromino(self.env.generate_next_tetromino_type())
 
                 transitions.append([state, tree_policy, current_score])
 
-                if (step_count > 1e5) and (step_count % self.batch_size == 0):
+                if all([
+                    episode > 0,
+                    step_count >= self.batch_size,
+                    step_count % self.batch_size == 0
+                ]):
                     self.update()
 
                 step_count += 1
 
-            # An episode has ended, we can now compute the return-to-go (RTG)
-            # by subtracting the final score from each transition's current total reward (score)
             final_score = self.env.score
             scores.append(final_score)
+
+            print(f"Episode {episode}, Score: {final_score}, Steps: {step_count}")
+            np.save("./out/final_scores.npy", np.array(scores))
+
             if (episode + 1) % 10 == 0:
                 avg_score = sum(scores[-10:]) / 10
                 print(f"Episode {episode+1}, Average Score (last 10): {avg_score}")
+
+            # After each episode compute the return-to-go (RTG)
+            # by subtracting the final score from each transition's current total reward (score)
             for t in transitions:
                 t[2] = final_score - t[2]
 

@@ -64,9 +64,12 @@ class MonteCarloTreeNode:
         parent_visit_count = self.visit_count
         children = list(self.children.values())
 
-        visit_counts = np.array([child.visit_count for child in children])
-        q_value_sums = np.array([child.q_value_sum for child in children])
-        prior_probabilities = np.array([child.prior_probability for child in children])
+        visit_counts = np.array([child.visit_count for child in children], dtype=np.float32)
+        q_value_sums = np.array([child.q_value_sum for child in children], dtype=np.float32)
+        prior_probabilities = np.array(
+            [child.prior_probability for child in children],
+            dtype=np.float32
+        )
 
         # q_value is an estimate of the expected value of the action,
         # where the child node represents the state immediately following
@@ -74,7 +77,8 @@ class MonteCarloTreeNode:
         # of observed q_values. As visit_count increases, q_values should
         # converge to a more accurate estimate of the true value. If child
         # node has not been visited, its q_value is 0 (i.e. not evaluated yet).
-        q_value_estimates = np.where(visit_counts > 0, q_value_sums / visit_counts, 0.0)
+        q_value_estimates = np.zeros_like(q_value_sums, dtype=np.float32)
+        np.divide(q_value_sums, visit_counts, out=q_value_estimates, where=visit_counts > 0)
 
         # Normalise q_value_estimates to [0, 1] range since the network outputs
         # raw game scores (lines cleared) which must be normalised for balance
@@ -106,21 +110,21 @@ class MonteCarloTreeNode:
         """
         This method uses a dual-headed neural network to evaluate the current state.
         Returns:
-        - value: The estimated value of the current state.
         - policy_logits: The logits for the action probabilities.
+        - value: The estimated value of the current state.
         """
         self.model.eval()
         with torch.no_grad():
             grid_tensor = torch.tensor(
                 self.env.grid,
                 dtype=torch.float32
-            ).unsqueeze(0).to(self.model.device)
+            ).unsqueeze(0).unsqueeze(0).to(self.model.device)
             tetromino_type = self.env.get_current_tetromino_type()
             tetromino_one_hot = torch.zeros(
                 (len(Tetromino.figures),),
                 dtype=torch.float32
-            ).to(self.model.device)
-            tetromino_one_hot[tetromino_type] = 1.0
+            ).unsqueeze(0).to(self.model.device)
+            tetromino_one_hot[:, tetromino_type] = 1.0
             # Forward pass through the neural network
             policy_logits, value = self.model(grid_tensor, tetromino_one_hot)
         return policy_logits, value
@@ -151,6 +155,9 @@ class MonteCarloTreeNode:
 
         # Evaluate as late as possible before expansion
         action_logits, q_value = self.nn_evaluation()
+
+        action_logits = action_logits.squeeze(0).cpu().numpy()
+        q_value = q_value.item()
 
         # Expansion:
 
@@ -214,29 +221,39 @@ class MonteCarloTreeNode:
         This parameter modulates exploration vs exploitation in the action selection
         of the actual game.
         Returns:
-        - action: The selected action based on the visit counts.
+        - action: The selected action based on the visit counts. \
+            Returns -1 if no actions are available.
         - tree_policy: The policy vector for the tree in this state, representing the
         probabilities of selecting each action derived from visit counts of the tree search.
         """
 
+        # Create a tree policy vector representing the probabilities of selecting each action
+        # informed by the visit counts of the tree search
+        tree_policy = np.zeros(ACTION_SPACE, dtype=np.float32)
+
+        if len(self.children) == 0:
+            # If there are no possible actions (no children from the root node),
+            # return -1 indicating no action can be taken and an empty tree policy
+            return -1, tree_policy
+
         if tau == 1e-5:
             # If tau is at minimum, select action greedily by the maximum visit count
             action = max(self.children, key=lambda action: self.children[action].visit_count)
-            tree_policy = np.zeros(ACTION_SPACE)
             tree_policy[action] = 1.0
             return action, tree_policy
 
         actions = list(self.children.keys())
-        visit_counts = np.array([child.visit_count for child in self.children.values()])
+        visit_counts = np.array(
+            [child.visit_count for child in self.children.values()],
+            dtype=np.float32
+        )
 
         # Normalise visit counts using softmax with temperature tau
         visit_counts = visit_counts ** (1 / tau)
         visit_probs = visit_counts / np.sum(visit_counts)
         # Select an action based on the probabilities derived from visit counts
         action = np.random.choice(actions, p=visit_probs)
-        # Create a tree policy vector representing the probabilities of selecting each action
-        # informed by the visit counts of the tree search
-        tree_policy = np.zeros(ACTION_SPACE)
+
         tree_policy[actions] = visit_probs
 
         return action, tree_policy

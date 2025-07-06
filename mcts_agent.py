@@ -1,6 +1,5 @@
 """MCTS + DRL agent that learns how to play Tetris"""
 
-import torch
 import numpy as np
 from tqdm import tqdm
 
@@ -19,7 +18,7 @@ class MCTSAgent:
         self.model = ResNet(ResidualBlock, [2, 2, 2, 2], ACTION_SPACE)
         self.buffer = ExperienceReplayBuffer(
             batch_size=batch_size,
-            max_size=1e6,
+            max_size=1000000,
             device=self.model.device
         )
         self.batch_size = batch_size
@@ -28,27 +27,8 @@ class MCTSAgent:
     def update(self):
         """Update the agent's model via experience replay"""
 
-        xp_batch = self.buffer.sample()
-        device = self.model.device
-
-        states, tree_policies, actual_rewards = zip(*xp_batch)
-        grids, tetromino_types = zip(*states)
-        grids = np.array(grids)
-        tree_policies = np.array(tree_policies)
-        grids = torch.tensor(grids, dtype=torch.float32).to(device)
-        tetrominoes_one_hot = torch.zeros((self.batch_size, 7), dtype=torch.float32).to(device)
-        tetrominoes_one_hot[torch.arange(self.batch_size), tetromino_types] = 1.0
-        tree_policies = torch.tensor(tree_policies, dtype=torch.float32).to(device)
-        actual_rewards = torch.tensor(actual_rewards, dtype=torch.float32).to(device)
-
-        legal_actions_masks = []
-        temp_env = Tetris()
-        for grid, tetromino_type in zip(grids, tetromino_types):
-            np.copyto(temp_env.grid, grid)
-            temp_env.create_tetromino(tetromino_type)
-            mask = temp_env.get_legal_actions()
-            legal_actions_masks.append(mask)
-        legal_actions_masks = np.stack(legal_actions_masks)
+        grids, tetrominoes_one_hot, tree_policies, \
+            rewards_to_go, legal_actions_masks = self.buffer.sample()
 
         self.model.train()
         self.model.optimiser.zero_grad()
@@ -56,8 +36,8 @@ class MCTSAgent:
             grids,
             tetrominoes_one_hot,
             tree_policies,
-            legal_actions_masks,
-            actual_rewards
+            rewards_to_go,
+            legal_actions_masks
         )
         loss.backward()
         self.model.optimiser.step()
@@ -65,7 +45,7 @@ class MCTSAgent:
     def train(self, episodes=1000):
         """Run the training loop for the MCTS agent."""
 
-        step_count = 0
+        prev_step_count = step_count = 0
         scores = []
 
         for episode in tqdm(range(episodes)):
@@ -80,7 +60,7 @@ class MCTSAgent:
                 # after each step in the actual environment.
                 root_node = MonteCarloTreeNode(env=self.env.copy(), model=self.model)
 
-                state = self.env.get_state()
+                grid, tetromino_one_hot = self.env.get_state()
 
                 for _ in range(MCTS_ITERATIONS):
                     root_node.run_iteration()
@@ -99,11 +79,24 @@ class MCTSAgent:
                 # Actual environment randomly generates the next Tetromino
                 self.env.create_tetromino(self.env.generate_next_tetromino_type())
 
-                transitions.append([state, tree_policy, current_score])
+                legal_actions = np.zeros(ACTION_SPACE, dtype=np.float32)
+                # Legal actions were determined by the children of the root node
+                legal_actions[list(root_node.children.keys())] = 1.0
+
+                transitions.append([
+                    grid,
+                    tetromino_one_hot,
+                    tree_policy,
+                    current_score,
+                    legal_actions
+                ])
 
                 if all([
-                    episode > 0,
-                    step_count >= self.batch_size,
+                    # Allows for sufficient diversity in transitions before sampling
+                    step_count >= 1e3,
+                    # 1:1 ratio of data generated-to-consumed means that
+                    # each transition is expected to be sampled for training
+                    # once before being replaced on average.
                     step_count % self.batch_size == 0
                 ]):
                     self.update()
@@ -113,8 +106,14 @@ class MCTSAgent:
             final_score = self.env.score
             scores.append(final_score)
 
-            print(f"Episode {episode}, Score: {final_score}, Steps: {step_count}")
+            print(
+                f"Episode {episode},\n"
+                f"Score: {final_score},\n"
+                f"Steps taken in episode: {step_count - prev_step_count}"
+            )
+
             np.save("./out/final_scores.npy", np.array(scores))
+            prev_step_count = step_count
 
             if (episode + 1) % 10 == 0:
                 avg_score = sum(scores[-10:]) / 10
@@ -123,6 +122,6 @@ class MCTSAgent:
             # After each episode compute the return-to-go (RTG)
             # by subtracting the final score from each transition's current total reward (score)
             for t in transitions:
-                t[2] = final_score - t[2]
+                t[3] = final_score - t[3]
 
             self.buffer.add_transitions_batch(transitions)

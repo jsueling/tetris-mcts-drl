@@ -296,10 +296,13 @@ class Tetris:
         """
         Returns a representation of the current game state used by the neural network.
         The state is a tuple containing:
-        - The current grid representation
-        - The current Tetromino type
+        - The current grid representation as a 4D tensor with shape (1, height, width)
+        - The current Tetromino type as a one-hot encoded vector.
         """
         grid_copy = np.zeros((self.height, self.width), dtype=np.float32)
         np.copyto(grid_copy, self.grid)
+        tetromino_type = self.get_current_tetromino_type()
+        tetromino_one_hot = np.zeros((len(Tetromino.figures),), dtype=np.float32)
+        tetromino_one_hot[tetromino_type] = 1.0
 
-        return grid_copy, self.get_current_tetromino_type()
+        return np.expand_dims(grid_copy, axis=0), tetromino_one_hot

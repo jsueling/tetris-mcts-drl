@@ -101,16 +101,14 @@ class ResNet(nn.Module):
             grids,
             tetrominoes_one_hot,
             tree_policies,
+            ground_truth_values,
             legal_action_masks,
-            ground_truth_values
         ):
         """
         Compute the loss for the model. This consists of cross-entropy loss
         between the tree policies and the predicted action probabilities,
         and mean squared error loss between the predicted values and ground truth values.
         """
-        # Add channel dimension for Conv2d
-        grids = grids.unsqueeze(1)
         # Forward pass through the model to get predicted action logits and values
         predicted_action_logits, predicted_values = self.forward(grids, tetrominoes_one_hot)
         # Apply legal action masks to the predicted action logits before softmax
@@ -118,10 +116,11 @@ class ResNet(nn.Module):
         predicted_action_logits[mask_legal] = -torch.inf
         # Compute the log probabilities of the predicted actions
         predicted_log_probs = torch.log_softmax(predicted_action_logits, dim=1)
-        # The policy loss is the negative log likelihood of the tree policies
+        # Negative log likelihood which penalises the model
+        # for predicting actions that differ from the tree policies
         policy_loss = -(tree_policies * predicted_log_probs).sum(dim=1).mean()
         # The value loss is the mean squared error between predicted values and ground truth values
-        value_loss = self.mse_loss(predicted_values, ground_truth_values)
+        value_loss = self.mse_loss(predicted_values.squeeze(-1), ground_truth_values)
         return policy_loss + value_loss
 
 class ResidualBlock(nn.Module):

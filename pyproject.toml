@@ -6,10 +6,10 @@ authors = [
     {name = "James Sue-Ling",email = "james_sueling@hotmail.co.uk"}
 ]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "tqdm (>=4.67.1,<5.0.0)",
-    "numpy (>=2.3.0,<3.0.0)",
+    "numpy (>=2.2.6,<3.0.0)",
     "torch (>=2.7.1,<3.0.0)"
 ]
 

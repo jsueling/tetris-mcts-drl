@@ -5,7 +5,7 @@ from typing import Dict, Optional
 import torch
 import numpy as np
 
-from tetris_env import Tetris, Tetromino
+from tetris_env import Tetris
 
 ACTION_SPACE = 40 # Rotations * Columns
 C_PUCT = 1.0  # Hyperparameter modulating prior-guided exploration bonus in pUCT

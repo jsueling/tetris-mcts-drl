@@ -101,8 +101,8 @@ class ResNet(nn.Module):
             grids,
             tetrominoes_one_hot,
             tree_policies,
+            ground_truth_values,
             legal_action_masks,
-            ground_truth_values
         ):
         """
         Compute the loss for the model. This consists of cross-entropy loss

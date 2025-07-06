@@ -36,8 +36,8 @@ class MCTSAgent:
             grids,
             tetrominoes_one_hot,
             tree_policies,
-            legal_actions_masks,
-            rewards_to_go
+            rewards_to_go,
+            legal_actions_masks
         )
         loss.backward()
         self.model.optimiser.step()

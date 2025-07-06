@@ -1,5 +1,8 @@
 """MCTS + DRL agent that learns how to play Tetris"""
 
+import os
+import time
+
 import numpy as np
 from tqdm import tqdm
 
@@ -10,7 +13,7 @@ from model import ResNet, ResidualBlock
 
 MCTS_ITERATIONS = 800 # Number of MCTS iterations per action selection
 ACTION_SPACE = 40 # Upper bound on possible actions for hard drop (rotations * columns placements)
-BATCH_SIZE = 128 # Batch size for experience replay
+BATCH_SIZE = 256 # Batch size for experience replay
 
 class MCTSAgent:
     """MCTS + DRL agent for playing Tetris."""
@@ -42,13 +45,20 @@ class MCTSAgent:
         loss.backward()
         self.model.optimiser.step()
 
-    def train(self, episodes=1000):
+    def train(self, episodes=10000):
         """Run the training loop for the MCTS agent."""
 
-        prev_step_count = step_count = 0
-        scores = []
+        os.makedirs("./out", exist_ok=True)
 
-        for episode in tqdm(range(episodes)):
+        prev_step_count = step_count = 0
+        episode_scores = []
+        rolling_avg_scores = []
+        steps_per_episode = []
+        episode_times = []
+
+        for _ in tqdm(range(episodes)):
+
+            start_time = time.time()
 
             # Reset the environment per episode, generating the first Tetromino of the sequence
             self.env.reset()
@@ -104,20 +114,25 @@ class MCTSAgent:
                 step_count += 1
 
             final_score = self.env.score
-            scores.append(final_score)
 
-            print(
-                f"Episode {episode},\n"
-                f"Score: {final_score},\n"
-                f"Steps taken in episode: {step_count - prev_step_count}"
-            )
+            episode_scores.append(final_score)
+            rolling_avg_scores.append(np.mean(episode_scores[-100:]))
+            steps_per_episode.append(step_count - prev_step_count)
+            end_time = time.time()
+            episode_times.append(end_time - start_time)
 
-            np.save("./out/final_scores.npy", np.array(scores))
+            results = {
+                "episode_scores": episode_scores,
+                "rolling_avg_scores": rolling_avg_scores,
+                "steps_per_episode": steps_per_episode,
+                "episode_times": episode_times,
+                "total_steps": step_count,
+                "total_episodes": len(episode_scores),
+            }
+
+            np.save("./out/tetris_mcts_drl_results.npy", results)
+
             prev_step_count = step_count
-
-            if (episode + 1) % 10 == 0:
-                avg_score = sum(scores[-10:]) / 10
-                print(f"Episode {episode+1}, Average Score (last 10): {avg_score}")
 
             # After each episode compute the return-to-go (RTG)
             # by subtracting the final score from each transition's current total reward (score)

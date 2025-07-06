@@ -4,6 +4,7 @@ Adapted from: https://github.com/corentinpla/Learning-Tetris-Using-the-Noisy-Cro
 """
 
 import random
+from typing import Optional
 
 import numpy as np
 
@@ -76,12 +77,17 @@ class Tetris:
     Represents the Tetris game state,
     including the grid, current tetromino, score, and game state.
     """
-    def __init__(self, height: int, width: int, tetromino_randomisation_scheme: str = "uniform"):
+    def __init__(
+        self,
+        height: int=20,
+        width: int=10,
+        tetromino_randomisation_scheme: str="uniform"
+    ):
 
         self.current_tetromino = None
         self.height = height
         self.width = width
-        self.grid = np.zeros((height, width), dtype=int)
+        self.grid = np.zeros((height, width), dtype=np.float32)
         self.score = 0
         self.done = False
 
@@ -99,26 +105,36 @@ class Tetris:
             grid_repr.append("".join(str(self.grid[row][col]) for col in range(self.width)))
         return "\n".join(grid_repr)
 
-    def new_tetromino(self, tetromino_type: int):
-        """
-        Creates a new Tetromino of tetromino_type at the specified (x, y) and rotation.
-        """
+    def create_tetromino(self, tetromino_type: int) -> None:
+        """Creates a new unspawned Tetromino of tetromino_type attached to this game state."""
         self.current_tetromino = Tetromino(tetromino_type)
 
-    def get_next_piece(self):
+    def get_current_tetromino_type(self) -> Optional[int]:
         """
-        Returns the next piece type based on the randomisation scheme.
-        For "uniform", it returns a random piece type.
-        For "bag", it returns a piece type from a bag containing each
+        Returns the type of the current Tetromino.
+        If no Tetromino is currently active, returns None.
+        """
+        if self.current_tetromino:
+            return self.current_tetromino.type
+        return None
+
+    def generate_next_tetromino_type(self, is_first_tetromino=False) -> int:
+        """
+        Generates the next Tetromino type based on the randomisation scheme.
+        For "uniform", it returns a random Tetromino type.
+        For "bag", it returns a Tetromino type from a bag containing each
         Tetromino in a random order, refilling and reshuffling it when empty.
         """
 
         if self.tetromino_randomisation_scheme == "uniform":
-            # Randomly select a piece type uniformly
+            # Randomly select a Tetromino type uniformly
             return random.randint(0, 6)
 
         if self.tetromino_randomisation_scheme == "bag":
-            if not self.bag:
+
+            # If this is the first Tetromino of the episode
+            # or the bag is empty, refill and shuffle it
+            if is_first_tetromino or not self.bag:
                 self.bag = list(range(len(Tetromino.figures)))
                 random.shuffle(self.bag)
             return self.bag.pop()
@@ -155,21 +171,25 @@ class Tetris:
         if broken_lines > 0:
             self.grid = np.vstack((
                 # Add empty rows at the top to replace the broken lines
-                np.zeros((broken_lines, self.width), dtype=int),
+                np.zeros((broken_lines, self.width), dtype=np.float32),
                 # Keep only rows that were not filled (maintains ordering)
                 self.grid[~filled_lines]
             ))
             self.score += broken_lines
 
     def hard_drop(self, colour=1):
-        """Move the current figure directly down to the bottom of the grid."""
+        """
+        Move the current Tetromino directly down to the bottom of the grid.
+        After the hard drop, the Tetromino is removed from the game state.
+        """
         while not self.intersects():
             self.current_tetromino.y += 1
         self.current_tetromino.y -= 1
         self.freeze(colour)
+        self.current_tetromino = None
 
     def freeze(self, colour):
-        """Freeze the current figure, it now becomes part of the grid."""
+        """Freeze the current Tetromino, it now becomes part of the grid."""
         x, y = self.current_tetromino.x, self.current_tetromino.y
         for cell_index in self.current_tetromino.image():
             tetromino_row = y + (cell_index // 4)
@@ -206,18 +226,24 @@ class Tetris:
         Redundant rotations are also masked to avoid unnecessary actions.
         """
 
-        legal_actions = [False] * (self.width * 4)
+        max_rotations = 4
+        max_columns = self.width
+
+        # All actions are initially illegal. Actions are represented
+        # as indices in base max_columns as rotation * max_columns + column
+        # where rotation is in [0, 3] and column is in [0, 9]
+        legal_actions = np.array([False] * (max_columns * max_rotations))
 
         # Get the number of unique rotations for the current Tetromino
         # since Tetrominoes have symmetric rotations.
         unique_rotations = len(Tetromino.figures[self.current_tetromino.type])
 
         for rotation in range(unique_rotations):
-            for col in range(self.width):
+            for col in range(max_columns):
                 # Try to spawn the Tetromino in the specified column and rotation
                 self.current_tetromino.spawn(x=col, rotation=rotation)
                 if not self.intersects():
-                    legal_actions[rotation * self.width + col] = True
+                    legal_actions[rotation * max_columns + col] = True
 
         # Despawn the Tetromino after checking all legal actions
         # to ensure the state is clean for the next action
@@ -228,13 +254,52 @@ class Tetris:
     def step(self, action, colour=1):
         """
         Perform a step in the game by applying the given action.
+
         Each action is represented as 2 digits in base 10:
         - The first digit is the rotation (0-3).
         - The second digit is the column (0-9).
         """
         rotation, col = divmod(action, self.width)
-        self.current_tetromino.x = col
-        self.current_tetromino.rotation = rotation
+        self.current_tetromino.spawn(x=col, rotation=rotation)
         if self.intersects():
-            raise AssertionError("Illegal action: step() called without checking legal actions")
-        self.hard_drop(colour)
+            self.done = True
+        else:
+            # Current Tetromino is placed and removed from the game state
+            self.hard_drop(colour)
+        return self.done, self.score
+
+    def reset(self):
+        """
+        Reset the game state to the initial conditions.
+        """
+        self.grid.fill(0)
+        self.score = 0
+        self.done = False
+        # Generate the first Tetromino of the new episode
+        self.create_tetromino(
+            self.generate_next_tetromino_type(is_first_tetromino=True)
+        )
+
+    def copy(self):
+        """Create a deep copy of the current game state."""
+        new_env = Tetris(self.height, self.width, self.tetromino_randomisation_scheme)
+        np.copyto(new_env.grid, self.grid)
+        new_env.score = self.score
+        new_env.done = self.done
+        if self.current_tetromino:
+            new_env.create_tetromino(self.get_current_tetromino_type())
+        if self.tetromino_randomisation_scheme == "bag":
+            new_env.bag = self.bag.copy()
+        return new_env
+
+    def get_state(self):
+        """
+        Returns a representation of the current game state used by the neural network.
+        The state is a tuple containing:
+        - The current grid representation
+        - The current Tetromino type
+        """
+        grid_copy = np.zeros((self.height, self.width), dtype=np.float32)
+        np.copyto(grid_copy, self.grid)
+
+        return grid_copy, self.get_current_tetromino_type()

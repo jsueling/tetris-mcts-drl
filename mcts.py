@@ -113,20 +113,23 @@ class MonteCarloTreeNode:
         - policy_logits: The logits for the action probabilities.
         - value: The estimated value of the current state.
         """
+
+        # Single inference is very inefficient.
+        # TODO: Batch multiple inferences together
+
         self.model.eval()
         with torch.no_grad():
-            grid_tensor = torch.tensor(
-                self.env.grid,
+            grid, tetromino_one_hot = self.env.get_state()
+            grid_gpu = torch.tensor(
+                np.expand_dims(grid, axis=0), # Add batch dimension
                 dtype=torch.float32
-            ).unsqueeze(0).unsqueeze(0).to(self.model.device)
-            tetromino_type = self.env.get_current_tetromino_type()
-            tetromino_one_hot = torch.zeros(
-                (len(Tetromino.figures),),
+            ).to(self.model.device)
+            tetromino_one_hot_gpu = torch.tensor(
+                np.expand_dims(tetromino_one_hot, axis=0),
                 dtype=torch.float32
-            ).unsqueeze(0).to(self.model.device)
-            tetromino_one_hot[:, tetromino_type] = 1.0
+            ).to(self.model.device)
             # Forward pass through the neural network
-            policy_logits, value = self.model(grid_tensor, tetromino_one_hot)
+            policy_logits, value = self.model(grid_gpu, tetromino_one_hot_gpu)
         return policy_logits, value
 
     def evaluate(self) -> float:

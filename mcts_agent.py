@@ -30,14 +30,12 @@ class MCTSAgent:
     def update(self):
         """Update the agent's model via experience replay"""
 
-        grids, tetrominoes_one_hot, tree_policies, \
-            rewards_to_go, legal_actions_masks = self.buffer.sample()
+        states, tree_policies, rewards_to_go, legal_actions_masks = self.buffer.sample()
 
         self.model.train()
         self.model.optimiser.zero_grad()
         loss = self.model.loss(
-            grids,
-            tetrominoes_one_hot,
+            states,
             tree_policies,
             rewards_to_go,
             legal_actions_masks
@@ -76,7 +74,7 @@ class MCTSAgent:
                     is_root=True,
                 )
 
-                grid, tetromino_one_hot = self.env.get_state()
+                state = self.env.get_state()
 
                 for _ in range(MCTS_ITERATIONS):
                     root_node.run_iteration()
@@ -104,8 +102,7 @@ class MCTSAgent:
                 legal_actions[list(root_node.children.keys())] = 1.0
 
                 transitions.append([
-                    grid,
-                    tetromino_one_hot,
+                    state,
                     tree_policy,
                     current_score,
                     legal_actions
@@ -141,13 +138,13 @@ class MCTSAgent:
                 "total_episodes": len(episode_scores),
             }
 
-            np.save("./out/tetris_mcts_drl_results.npy", results)
+            np.save("./out/tetris_mcts_drl_results.npy", np.array(results))
 
             prev_step_count = step_count
 
             # After each episode compute the return-to-go (RTG)
             # by subtracting the final score from each transition's current total reward (score)
             for t in transitions:
-                t[3] = final_score - t[3]
+                t[2] = final_score - t[2]
 
             self.buffer.add_transitions_batch(transitions)

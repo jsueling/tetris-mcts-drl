@@ -125,17 +125,13 @@ class MonteCarloTreeNode:
 
         self.model.eval()
         with torch.no_grad():
-            grid, tetromino_one_hot = self.env.get_state()
-            grid_gpu = torch.tensor(
-                np.expand_dims(grid, axis=0), # Add batch dimension
-                dtype=torch.float32
-            ).to(self.model.device)
-            tetromino_one_hot_gpu = torch.tensor(
-                np.expand_dims(tetromino_one_hot, axis=0),
+            state = self.env.get_state()
+            state_gpu = torch.tensor(
+                np.expand_dims(state, axis=0), # Add batch dimension
                 dtype=torch.float32
             ).to(self.model.device)
             # Forward pass through the neural network
-            policy_logits, value = self.model(grid_gpu, tetromino_one_hot_gpu)
+            policy_logits, value = self.model(state_gpu)
         return policy_logits, value
 
     def evaluate(self) -> float:

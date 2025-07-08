@@ -111,7 +111,7 @@ class Tetris:
 
     def get_current_tetromino_type(self) -> Optional[int]:
         """
-        Returns the type of the current Tetromino.
+        Returns the type of the current Tetromino (0-6).
         If no Tetromino is currently active, returns None.
         """
         if self.current_tetromino:
@@ -299,15 +299,12 @@ class Tetris:
 
     def get_state(self):
         """
-        Returns a representation of the current game state used by the neural network.
-        The state is a tuple containing:
-        - The current grid representation as a 4D tensor with shape (1, height, width)
-        - The current Tetromino type as a one-hot encoded vector.
+        Returns a representation of the current game state used by the neural network:
+        - The first layer encodes the grid, where each cell is either 0 (empty) or 1 (filled).
+        - Layers 1 to 7 are a one-hot encoding of the current Tetromino type (filled with 1s when active).
         """
-        grid_copy = np.zeros((self.height, self.width), dtype=np.float32)
-        np.copyto(grid_copy, self.grid)
+        state = np.zeros((1 + len(Tetromino.figures), self.height, self.width), dtype=np.float32)
+        np.copyto(state[0], self.grid)
         tetromino_type = self.get_current_tetromino_type()
-        tetromino_one_hot = np.zeros((len(Tetromino.figures),), dtype=np.float32)
-        tetromino_one_hot[tetromino_type] = 1.0
-
-        return np.expand_dims(grid_copy, axis=0), tetromino_one_hot
+        state[tetromino_type + 1, :, :] = 1.0
+        return state

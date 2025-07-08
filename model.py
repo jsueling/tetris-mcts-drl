@@ -54,7 +54,7 @@ class ResNet(nn.Module):
         self.device = device
         self.to(device)
 
-        self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-5)
+        self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-4)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimiser,
             patience=3,

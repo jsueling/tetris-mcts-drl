@@ -58,6 +58,8 @@ class MCTSAgent:
 
         for _ in tqdm(range(episodes)):
 
+            exploration_steps = 0
+
             start_time = time.time()
 
             # Reset the environment per episode, generating the first Tetromino of the sequence
@@ -68,7 +70,11 @@ class MCTSAgent:
 
                 # Since Tetromino generation is stochastic, the old tree must be discarded
                 # after each step in the actual environment.
-                root_node = MonteCarloTreeNode(env=self.env.copy(), model=self.model)
+                root_node = MonteCarloTreeNode(
+                    env=self.env.copy(),
+                    model=self.model,
+                    is_root=True,
+                )
 
                 grid, tetromino_one_hot = self.env.get_state()
 
@@ -78,7 +84,11 @@ class MCTSAgent:
                 # The next action is decided based on the visit counts of the actions
                 # available to the root node in the simulations. The tree policy is the
                 # probability distribution over those actions
-                action, tree_policy = root_node.decide_action(tau=1.0)
+                action, tree_policy = root_node.decide_action(
+                    # First 30 steps of the episode are exploratory,
+                    # then the agent only exploits
+                    tau=(1.0 if exploration_steps < 30 else 0.0)
+                )
 
                 # If the action is -1, no legal actions are available
                 if action == -1:
@@ -112,6 +122,7 @@ class MCTSAgent:
                     self.update()
 
                 step_count += 1
+                exploration_steps += 1
 
             final_score = self.env.score
 

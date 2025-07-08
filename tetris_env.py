@@ -224,6 +224,11 @@ class Tetris:
         Legal actions here are defined using the simplified version of Tetris
         which assumes that the Tetromino can be spawned in any column.
         Redundant rotations are also masked to avoid unnecessary actions.
+
+        Returns:
+            np.array: A boolean array of shape (40,) where each index corresponds
+            to a possible action (rotation * width + column).
+            True indicates that the action is legal, False indicates it is illegal.
         """
 
         max_rotations = 4

@@ -23,20 +23,18 @@ class ExperienceReplayBuffer:
         # 3. Value for the state calculated as reward-to-go when the actual game ends
         # 4. Legal actions mask for the current state
 
-        self.grids = torch.zeros((max_size, 1, 20, 10), dtype=torch.float32, device=device)
-        self.tetrominoes_one_hot = torch.zeros((max_size, 7), dtype=torch.float32, device=device)
+        self.states = torch.zeros((max_size, 8, 20, 10), dtype=torch.float32, device=device)
         self.tree_policies = torch.zeros((max_size, 40), dtype=torch.float32, device=device)
         self.rewards_to_go = torch.zeros((max_size,), dtype=torch.float32, device=device)
-        self.legal_actions_masks = torch.zeros((max_size, 40), dtype=torch.float32, device=device)
+        self.legal_actions_masks = torch.zeros((max_size, 40), dtype=torch.bool, device=device)
 
     def add_transition(self, transition):
         """Add a single transition to the buffer."""
 
-        self.grids[self.position] = transition[0]
-        self.tetrominoes_one_hot[self.position] = transition[1]
-        self.tree_policies[self.position] = transition[2]
-        self.rewards_to_go[self.position] = transition[3]
-        self.legal_actions_masks[self.position] = transition[4]
+        self.states[self.position] = transition[0]
+        self.tree_policies[self.position] = transition[1]
+        self.rewards_to_go[self.position] = transition[2]
+        self.legal_actions_masks[self.position] = transition[3]
 
         # Update position, wrapping around if necessary
         self.position = (self.position + 1) % self.max_size
@@ -50,19 +48,16 @@ class ExperienceReplayBuffer:
 
         batch_size = len(transitions)
 
-        grids, tetrominoes_one_hot, tree_policies, \
-            rewards_to_go, legal_actions_masks = zip(*transitions)
+        states, tree_policies, rewards_to_go, legal_actions_masks = zip(*transitions)
 
         # Convert lists -> numpy arrays -> tensors (efficient conversion to tensors)
-        grids_cpu = torch.tensor(np.array(grids, dtype=np.float32))
-        tetrominoes_one_hot_cpu = torch.tensor(np.array(tetrominoes_one_hot, dtype=np.float32))
+        states_cpu = torch.tensor(np.array(states, dtype=np.float32))
         tree_policies_cpu = torch.tensor(np.array(tree_policies, dtype=np.float32))
         rewards_to_go_cpu = torch.tensor(np.array(rewards_to_go, dtype=np.float32))
         legal_actions_masks_cpu = torch.tensor(np.array(legal_actions_masks, dtype=np.float32))
 
         # Move tensors to the GPU in a single operation
-        grids_gpu = grids_cpu.to(self.device)
-        tetrominoes_one_hot_gpu = tetrominoes_one_hot_cpu.to(self.device)
+        states_gpu = states_cpu.to(self.device)
         tree_policies_gpu = tree_policies_cpu.to(self.device)
         rewards_to_go_gpu = rewards_to_go_cpu.to(self.device)
         legal_actions_masks_gpu = legal_actions_masks_cpu.to(self.device)
@@ -72,8 +67,7 @@ class ExperienceReplayBuffer:
 
         # Case 1: No wrap-around
         if end <= self.max_size:
-            self.grids[start:end] = grids_gpu
-            self.tetrominoes_one_hot[start:end] = tetrominoes_one_hot_gpu
+            self.states[start:end] = states_gpu
             self.tree_policies[start:end] = tree_policies_gpu
             self.rewards_to_go[start:end] = rewards_to_go_gpu
             self.legal_actions_masks[start:end] = legal_actions_masks_gpu
@@ -86,8 +80,7 @@ class ExperienceReplayBuffer:
             # The first segment contains elements that fill the remaining buffer capacity
             remaining_buffer_space = self.max_size - start
 
-            self.grids[start:] = grids_gpu[:remaining_buffer_space]
-            self.tetrominoes_one_hot[start:] = tetrominoes_one_hot_gpu[:remaining_buffer_space]
+            self.states[start:] = states_gpu[:remaining_buffer_space]
             self.tree_policies[start:] = tree_policies_gpu[:remaining_buffer_space]
             self.rewards_to_go[start:] = rewards_to_go_gpu[:remaining_buffer_space]
             self.legal_actions_masks[start:] = legal_actions_masks_gpu[:remaining_buffer_space]
@@ -95,10 +88,10 @@ class ExperienceReplayBuffer:
             # The second segment contains the elements that wrap around
             wrapped_end = batch_size - remaining_buffer_space
 
-            self.grids[:wrapped_end] = grids_gpu[remaining_buffer_space:]
-            self.tetrominoes_one_hot[:wrapped_end] = tetrominoes_one_hot_gpu[remaining_buffer_space:]
+            self.states[:wrapped_end] = states_gpu[remaining_buffer_space:]
             self.tree_policies[:wrapped_end] = tree_policies_gpu[remaining_buffer_space:]
             self.rewards_to_go[:wrapped_end] = rewards_to_go_gpu[remaining_buffer_space:]
+            self.legal_actions_masks[:wrapped_end] = legal_actions_masks_gpu[remaining_buffer_space:]
             self.position = wrapped_end
 
     def sample(self):
@@ -106,8 +99,7 @@ class ExperienceReplayBuffer:
         Uniform randomly samples a batch of transitions from the buffer.
         Returns:
             A tuple containing:
-            - A batch of grids (shape: [batch_size, 1, 20, 10])
-            - A batch of one-hot encoded tetromino types (shape: [batch_size, 7])
+            - A batch of states (shape: [batch_size, 1, 20, 10])
             - A batch of tree policies (shape: [batch_size, 40])
             - A batch of rewards-to-go (shape: [batch_size])
             - A batch of legal actions masks (shape: [batch_size, 40])
@@ -123,8 +115,7 @@ class ExperienceReplayBuffer:
         )
 
         return (
-            self.grids[indices],
-            self.tetrominoes_one_hot[indices],
+            self.states[indices],
             self.tree_policies[indices],
             self.rewards_to_go[indices],
             self.legal_actions_masks[indices]

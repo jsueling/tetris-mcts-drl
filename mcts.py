@@ -10,6 +10,10 @@ from tetris_env import Tetris
 ACTION_SPACE = 40 # Rotations * Columns
 C_PUCT = 1.0  # Hyperparameter modulating prior-guided exploration bonus in pUCT
 
+# Dirichlet noise parameters for exploration
+DIRICHLET_ALPHA = 0.03
+DIRICHLET_EPSILON = 0.25
+
 class MonteCarloTreeNode:
     """
     A node in the tree representing a game state.
@@ -20,6 +24,7 @@ class MonteCarloTreeNode:
         self,
         env: Tetris,
         parent: Optional["MonteCarloTreeNode"] = None,
+        is_root: bool = False,
         prior_probability=0.0,
         model=None
     ):
@@ -27,6 +32,7 @@ class MonteCarloTreeNode:
         self.env = env
         self.parent: Optional["MonteCarloTreeNode"] = parent
         self.model = model
+        self.is_root = is_root
 
         # Backpropagation statistics
         self.visit_count = 0
@@ -119,17 +125,13 @@ class MonteCarloTreeNode:
 
         self.model.eval()
         with torch.no_grad():
-            grid, tetromino_one_hot = self.env.get_state()
-            grid_gpu = torch.tensor(
-                np.expand_dims(grid, axis=0), # Add batch dimension
-                dtype=torch.float32
-            ).to(self.model.device)
-            tetromino_one_hot_gpu = torch.tensor(
-                np.expand_dims(tetromino_one_hot, axis=0),
+            state = self.env.get_state()
+            state_gpu = torch.tensor(
+                np.expand_dims(state, axis=0), # Add batch dimension
                 dtype=torch.float32
             ).to(self.model.device)
             # Forward pass through the neural network
-            policy_logits, value = self.model(grid_gpu, tetromino_one_hot_gpu)
+            policy_logits, value = self.model(state_gpu)
         return policy_logits, value
 
     def evaluate(self) -> float:
@@ -164,15 +166,22 @@ class MonteCarloTreeNode:
 
         # Expansion:
 
-        # Mask illegal actions by setting their probabilities to -inf before softmax
-        for action_index in range(ACTION_SPACE):
-            illegal_action = not legal_actions[action_index]
-            if illegal_action:
-                action_logits[action_index] = float("-inf")
+        # Mask illegal actions by setting logits to large negative before softmax
+        # which will give probability zero after softmax
+        action_logits[~legal_actions] = -1e9
 
         exponential_action_logits = np.exp(action_logits)
         # Apply softmax to action logits to get action probabilities
         action_probabilities = exponential_action_logits / np.sum(exponential_action_logits)
+
+        # Add Dirichlet noise to root node's action probabilities for sufficient exploration
+        if self.is_root:
+            dirichlet_noise = np.random.dirichlet(
+                # Noise is distributed among legal actions only
+                np.full(np.sum(legal_actions), DIRICHLET_ALPHA)
+            )
+            action_probabilities[legal_actions] *= (1 - DIRICHLET_EPSILON)
+            action_probabilities[legal_actions] += DIRICHLET_EPSILON * dirichlet_noise
 
         # Determinise the generation of the next Tetromino for all child nodes.
         # This means all actions share the same stochastic outcome once the node is evaluated.
@@ -239,7 +248,7 @@ class MonteCarloTreeNode:
             # return -1 indicating no action can be taken and an empty tree policy
             return -1, tree_policy
 
-        if tau == 1e-5:
+        if tau == 0.0:
             # If tau is at minimum, select action greedily by the maximum visit count
             action = max(self.children, key=lambda action: self.children[action].visit_count)
             tree_policy[action] = 1.0

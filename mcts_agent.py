@@ -30,14 +30,12 @@ class MCTSAgent:
     def update(self):
         """Update the agent's model via experience replay"""
 
-        grids, tetrominoes_one_hot, tree_policies, \
-            rewards_to_go, legal_actions_masks = self.buffer.sample()
+        states, tree_policies, rewards_to_go, legal_actions_masks = self.buffer.sample()
 
         self.model.train()
         self.model.optimiser.zero_grad()
         loss = self.model.loss(
-            grids,
-            tetrominoes_one_hot,
+            states,
             tree_policies,
             rewards_to_go,
             legal_actions_masks
@@ -58,6 +56,8 @@ class MCTSAgent:
 
         for _ in tqdm(range(episodes)):
 
+            exploration_steps = 0
+
             start_time = time.time()
 
             # Reset the environment per episode, generating the first Tetromino of the sequence
@@ -68,9 +68,13 @@ class MCTSAgent:
 
                 # Since Tetromino generation is stochastic, the old tree must be discarded
                 # after each step in the actual environment.
-                root_node = MonteCarloTreeNode(env=self.env.copy(), model=self.model)
+                root_node = MonteCarloTreeNode(
+                    env=self.env.copy(),
+                    model=self.model,
+                    is_root=True,
+                )
 
-                grid, tetromino_one_hot = self.env.get_state()
+                state = self.env.get_state()
 
                 for _ in range(MCTS_ITERATIONS):
                     root_node.run_iteration()
@@ -78,7 +82,11 @@ class MCTSAgent:
                 # The next action is decided based on the visit counts of the actions
                 # available to the root node in the simulations. The tree policy is the
                 # probability distribution over those actions
-                action, tree_policy = root_node.decide_action(tau=1.0)
+                action, tree_policy = root_node.decide_action(
+                    # First 30 steps of the episode are exploratory,
+                    # then the agent only exploits
+                    tau=(1.0 if exploration_steps < 30 else 0.0)
+                )
 
                 # If the action is -1, no legal actions are available
                 if action == -1:
@@ -94,8 +102,7 @@ class MCTSAgent:
                 legal_actions[list(root_node.children.keys())] = 1.0
 
                 transitions.append([
-                    grid,
-                    tetromino_one_hot,
+                    state,
                     tree_policy,
                     current_score,
                     legal_actions
@@ -112,6 +119,7 @@ class MCTSAgent:
                     self.update()
 
                 step_count += 1
+                exploration_steps += 1
 
             final_score = self.env.score
 
@@ -130,13 +138,13 @@ class MCTSAgent:
                 "total_episodes": len(episode_scores),
             }
 
-            np.save("./out/tetris_mcts_drl_results.npy", results)
+            np.save("./out/tetris_mcts_drl_results.npy", np.array(results))
 
             prev_step_count = step_count
 
             # After each episode compute the return-to-go (RTG)
             # by subtracting the final score from each transition's current total reward (score)
             for t in transitions:
-                t[3] = final_score - t[3]
+                t[2] = final_score - t[2]
 
             self.buffer.add_transitions_batch(transitions)

@@ -64,8 +64,7 @@ class MonteCarloTreeNode:
     def get_best_child_by_puct(self) -> 'MonteCarloTreeNode':
         """
         Returns this node's child with the maximum pUCT value
-        (Predictor + Upper Confidence Bound for Trees),
-        normalising q-value estimates into the range [0, 1].
+        (Predictor + Upper Confidence Bound for Trees)
         """
         parent_visit_count = self.visit_count
         children = list(self.children.values())
@@ -86,17 +85,9 @@ class MonteCarloTreeNode:
         q_value_estimates = np.zeros_like(q_value_sums, dtype=np.float32)
         np.divide(q_value_sums, visit_counts, out=q_value_estimates, where=visit_counts > 0)
 
-        # Normalise q_value_estimates to [0, 1] range since the network outputs
-        # raw game scores (lines cleared) which must be normalised for balance
-        # between exploration and exploitation terms.
-        max_q_value_estimate = np.max(q_value_estimates)
-        min_q_value_estimate = np.min(q_value_estimates)
-        q_value_estimates_normalised = (q_value_estimates - min_q_value_estimate) \
-            / (max_q_value_estimate - min_q_value_estimate + 1e-8)
-
         # Balance exploration and exploitation using the modified pUCT formula:
         # Q(s, a) + c_puct * P(s, a) * sqrt(∑_b N(s, b)) / (N(s, a) + 1)
-        puct_values = q_value_estimates_normalised + C_PUCT * prior_probabilities \
+        puct_values = q_value_estimates + C_PUCT * prior_probabilities \
             * np.sqrt(parent_visit_count) / (visit_counts + 1)
 
         return children[np.argmax(puct_values)]

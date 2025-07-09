@@ -10,6 +10,7 @@ from mcts import MonteCarloTreeNode
 from experience_replay_buffer import ExperienceReplayBuffer
 from tetris_env import Tetris
 from model import ResNet, ResidualBlock
+from score_normaliser import ScoreNormaliser
 
 MCTS_ITERATIONS = 800 # Number of MCTS iterations per action selection
 ACTION_SPACE = 40 # Upper bound on possible actions for hard drop (rotations * columns placements)
@@ -26,6 +27,7 @@ class MCTSAgent:
         )
         self.batch_size = batch_size
         self.env = Tetris()
+        self.score_normaliser = ScoreNormaliser()
 
     def update(self):
         """Update the agent's model via experience replay"""
@@ -63,6 +65,7 @@ class MCTSAgent:
             # Reset the environment per episode, generating the first Tetromino of the sequence
             self.env.reset()
             transitions = []
+            rewards_to_go = []
             done = False
             while not done:
 
@@ -104,9 +107,9 @@ class MCTSAgent:
                 transitions.append([
                     state,
                     tree_policy,
-                    current_score,
                     legal_actions
                 ])
+                rewards_to_go.append(current_score)
 
                 if all([
                     # Allows for sufficient diversity in transitions before sampling
@@ -143,8 +146,16 @@ class MCTSAgent:
             prev_step_count = step_count
 
             # After each episode compute the return-to-go (RTG)
-            # by subtracting the final score from each transition's current total reward (score)
-            for t in transitions:
-                t[2] = final_score - t[2]
+            # then normalise it to [-1, 1] range based on rolling average score
+            # since Tetris scores are unbounded. This should encourage the agent to
+            # learn to play better than its current iteration rather than just score higher.
+            # When used in MCTS node selection, the assumption is that moves that were improvements
+            # on average score in the past will also be improvements on average score in the future
+            # which is a reasonable assumption for Tetris due to the repeated nature of the game.
+            for i, transition in enumerate(transitions):
+                rewards_to_go[i] = final_score - rewards_to_go[i]
+                normalised_rtg = self.score_normaliser.normalise(rewards_to_go[i])
+                transition.append(normalised_rtg)
 
+            self.score_normaliser.update(rewards_to_go)
             self.buffer.add_transitions_batch(transitions)

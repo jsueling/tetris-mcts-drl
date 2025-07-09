@@ -76,7 +76,7 @@ class ResNet(nn.Module):
             nn.Linear(value_head_output_size, 256),
             nn.ReLU(),
             nn.Linear(256, 1),
-            nn.Sigmoid() # TODO, must reconsider value prediction output range
+            nn.Tanh()
         )
 
         self.device = device

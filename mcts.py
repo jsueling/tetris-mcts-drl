@@ -166,8 +166,9 @@ class MonteCarloTreeNode:
 
         # Expansion:
 
-        # Mask illegal actions by setting their probabilities to -inf before softmax
-        action_logits[~legal_actions] = float("-inf")
+        # Mask illegal actions by setting logits to large negative before softmax
+        # which will give probability zero after softmax
+        action_logits[~legal_actions] = -1e9
 
         exponential_action_logits = np.exp(action_logits)
         # Apply softmax to action logits to get action probabilities

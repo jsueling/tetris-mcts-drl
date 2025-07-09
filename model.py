@@ -157,7 +157,7 @@ class ResNet(nn.Module):
 
             # Apply legal action masks to the logits before softmax
             # to ensure only legal actions are considered
-            logits_nt[~masks_nt] = float("-inf")
+            logits_nt[~masks_nt] = -1e9
 
             # Compute the log probabilities of the predicted actions
             predicted_log_probs_nt = torch.log_softmax(logits_nt, dim=1)

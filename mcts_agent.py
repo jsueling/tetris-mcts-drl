@@ -2,6 +2,7 @@
 
 import os
 import time
+import multiprocessing as mp
 
 import numpy as np
 from tqdm import tqdm
@@ -11,6 +12,7 @@ from experience_replay_buffer import ExperienceReplayBuffer
 from tetris_env import Tetris
 from model import ResNet, ResidualBlock
 from score_normaliser import ScoreNormaliser
+from inference_server import InferenceServer
 
 MCTS_ITERATIONS = 800 # Number of MCTS iterations per action selection
 ACTION_SPACE = 40 # Upper bound on possible actions for hard drop (rotations * columns placements)
@@ -45,7 +47,7 @@ class MCTSAgent:
         loss.backward()
         self.model.optimiser.step()
 
-    def train(self, episodes=10000):
+    def train(self, episodes=10000, num_workers=10):
         """Run the training loop for the MCTS agent."""
 
         os.makedirs("./out", exist_ok=True)
@@ -55,6 +57,21 @@ class MCTSAgent:
         rolling_avg_scores = []
         steps_per_episode = []
         episode_times = []
+
+        # Pre-allocate queues for parallel MCTS simulations. Each worker has its own response queue
+        # to avoid contention when receiving responses from the queue.
+        response_queues = { worker_id: mp.Queue() for worker_id in range(num_workers) }
+        request_queue = mp.Queue()
+        result_queue = mp.Queue()
+
+        # Create and start the inference server which handles model inference
+        # requests sent by the MCTS workers.
+        inference_server = InferenceServer(
+            self.model,
+            request_queue=request_queue,
+            response_queues=response_queues
+        )
+        inference_server.start()
 
         for _ in tqdm(range(episodes)):
 
@@ -71,25 +88,64 @@ class MCTSAgent:
 
                 # Since Tetromino generation is stochastic, the old tree must be discarded
                 # after each step in the actual environment.
-                root_node = MonteCarloTreeNode(
-                    env=self.env.copy(),
-                    model=self.model,
-                    is_root=True,
+
+                # Multiple workers run MCTS iterations in parallel from the root.
+                # An average of the resulting visit counts is taken to account
+                # for stochasticity in Tetromino generation. Each tree search
+                # has a single determinised future (Ensemble UCT)
+
+                processes = []
+
+                for worker_id in range(num_workers):
+                    p = mp.Process(
+                        target=mcts_simulation_helper,
+                        args=(
+                            self.env.copy(),
+                            request_queue,
+                            response_queues[worker_id],
+                            worker_id,
+                            result_queue,
+                            MCTS_ITERATIONS
+                        )
+                    )
+                    p.start()
+                    processes.append(p)
+
+                # Block until all processes are finished
+                for p in processes:
+                    p.join()
+
+                # Fetch results from all processes
+                root_nodes = [result_queue.get() for _ in processes]
+
+                # Stack visit counts from all root nodes and compute the mean
+                mean_visit_counts = np.mean(
+                    [root_node["visit_counts"] for root_node in root_nodes],
+                    axis=0
                 )
-
-                state = self.env.get_state()
-
-                for _ in range(MCTS_ITERATIONS):
-                    root_node.run_iteration()
 
                 # The next action is decided based on the visit counts of the actions
                 # available to the root node in the simulations. The tree policy is the
                 # probability distribution over those actions
-                action, tree_policy = root_node.decide_action(
-                    # First 30 steps of the episode are exploratory,
-                    # then the agent only exploits
-                    tau=(1.0 if exploration_steps < 30 else 0.0)
-                )
+
+                tree_policy = np.zeros(ACTION_SPACE, dtype=np.float32)
+
+                # All actions available to the root node (same for any of the root nodes)
+                actions = root_nodes[0]["actions"]
+
+                if len(actions) == 0:
+                    action = -1
+                elif exploration_steps < 30:
+                    action = actions[np.argmax(mean_visit_counts)]
+                    tree_policy[action] = 1.0
+                else:
+                    # The temperature (tau) is set to 1 after the first 30 steps which has no effect
+                    # i.e. visit_counts ** (1 / tau)
+                    visit_probabilities = mean_visit_counts / np.sum(mean_visit_counts)
+                    tree_policy[actions] = visit_probabilities
+                    action = np.random.choice(ACTION_SPACE, p=tree_policy)
+
+                state = self.env.get_state()
 
                 # If the action is -1, no legal actions are available
                 if action == -1:
@@ -102,7 +158,7 @@ class MCTSAgent:
 
                 legal_actions = np.zeros(ACTION_SPACE, dtype=np.float32)
                 # Legal actions were determined by the children of the root node
-                legal_actions[list(root_node.children.keys())] = 1.0
+                legal_actions[actions] = 1.0
 
                 transitions.append([
                     state,
@@ -159,3 +215,34 @@ class MCTSAgent:
 
             self.score_normaliser.update(rewards_to_go)
             self.buffer.add_transitions_batch(transitions)
+
+        inference_server.stop()
+
+def mcts_simulation_helper(
+        env: Tetris,
+        request_queue: mp.Queue,
+        response_queue: mp.Queue,
+        worker_id: int,
+        result_queue: mp.Queue,
+        iterations: int,
+    ) -> MonteCarloTreeNode:
+    """
+    Helper function used by a single process for parallel simulations that runs MCTS
+    iterations on a single node and puts the results into the result queue.
+    """
+
+    root_node = MonteCarloTreeNode(
+        env=env,
+        is_root=True,
+        request_queue=request_queue,
+        response_queue=response_queue,
+        worker_id=worker_id
+    )
+
+    for _ in range(iterations):
+        root_node.run_iteration()
+
+    result_queue.put({
+        "actions": list(root_node.children.keys()),
+        "visit_counts": [child.visit_count for child in root_node.children.values()]
+    })

@@ -1,8 +1,8 @@
 """Monte Carlo Tree Search (MCTS) algorithm implementation."""
 
 from typing import Dict, Optional
+import multiprocessing as mp
 
-import torch
 import numpy as np
 
 from tetris_env import Tetris
@@ -23,16 +23,20 @@ class MonteCarloTreeNode:
     def __init__(
         self,
         env: Tetris,
+        request_queue: mp.Queue,
+        response_queue: mp.Queue,
+        worker_id: int,
         parent: Optional["MonteCarloTreeNode"] = None,
-        is_root: bool = False,
         prior_probability=0.0,
-        model=None
+        is_root: bool = False,
     ):
 
         self.env = env
         self.parent: Optional["MonteCarloTreeNode"] = parent
-        self.model = model
         self.is_root = is_root
+        self.request_queue = request_queue
+        self.response_queue = response_queue
+        self.worker_id = worker_id
 
         # Backpropagation statistics
         self.visit_count = 0
@@ -110,19 +114,13 @@ class MonteCarloTreeNode:
         - policy_logits: The logits for the action probabilities.
         - value: The estimated value of the current state.
         """
-
-        # Single inference is very inefficient.
-        # TODO: Batch multiple inferences together
-
-        self.model.eval()
-        with torch.no_grad():
-            state = self.env.get_state()
-            state_gpu = torch.tensor(
-                np.expand_dims(state, axis=0), # Add batch dimension
-                dtype=torch.float32
-            ).to(self.model.device)
-            # Forward pass through the neural network
-            policy_logits, value = self.model(state_gpu)
+        self.request_queue.put({
+            "state": self.env.get_state(),
+            "worker_id": self.worker_id
+        })
+        response = self.response_queue.get()
+        policy_logits = response["policy_logits"]
+        value = response["value"]
         return policy_logits, value
 
     def evaluate(self) -> float:
@@ -151,9 +149,6 @@ class MonteCarloTreeNode:
 
         # Evaluate as late as possible before expansion
         action_logits, q_value = self.nn_evaluation()
-
-        action_logits = action_logits.squeeze(0).cpu().numpy()
-        q_value = q_value.item()
 
         # Expansion:
 
@@ -191,9 +186,11 @@ class MonteCarloTreeNode:
 
             child_node = MonteCarloTreeNode(
                 env=copy_env,
+                request_queue=self.request_queue,
+                response_queue=self.response_queue,
+                worker_id=self.worker_id,
                 parent=self,
-                prior_probability=action_probabilities[action_index],
-                model=self.model
+                prior_probability=action_probabilities[action_index]
             )
 
             self.children[action_index] = child_node

@@ -102,7 +102,9 @@ class Tetris:
     def __repr__(self):
         grid_repr = []
         for row in range(self.height):
-            grid_repr.append("".join(str(self.grid[row][col]) for col in range(self.width)))
+            grid_repr.append(
+                "".join(str(np.int64(self.grid[row][col])) for col in range(self.width))
+            )
         return "\n".join(grid_repr)
 
     def create_tetromino(self, tetromino_type: int) -> None:
@@ -263,6 +265,10 @@ class Tetris:
         Each action is represented as 2 digits in base 10:
         - The first digit is the rotation (0-3).
         - The second digit is the column (0-9).
+
+        Returns:
+        - done (bool): True if the game is over, False otherwise.
+        - score (int): The current score after the action is applied.
         """
         rotation, col = divmod(action, self.width)
         self.current_tetromino.spawn(x=col, rotation=rotation)

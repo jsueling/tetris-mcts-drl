@@ -3,8 +3,10 @@
 import os
 import time
 import multiprocessing as mp
+import random
 
 import numpy as np
+import torch
 from tqdm import tqdm
 
 from mcts import MonteCarloTreeNode
@@ -17,6 +19,7 @@ from inference_server import InferenceServer
 MCTS_ITERATIONS = 800 # Number of MCTS iterations per action selection
 ACTION_SPACE = 40 # Upper bound on possible actions for hard drop (rotations * columns placements)
 BATCH_SIZE = 256 # Batch size for experience replay
+PROCESS_SEED_MODULUS = 2 ** 32 # Seed methods accept 32-bit integers only
 
 class MCTSAgent:
     """MCTS + DRL agent for playing Tetris."""
@@ -47,7 +50,7 @@ class MCTSAgent:
         loss.backward()
         self.model.optimiser.step()
 
-    def train(self, episodes=10000, num_workers=10):
+    def train(self, episodes=10000, n_workers=10):
         """Run the training loop for the MCTS agent."""
 
         os.makedirs("./out", exist_ok=True)
@@ -60,7 +63,7 @@ class MCTSAgent:
 
         # Pre-allocate queues for parallel MCTS simulations. Each worker has its own response queue
         # to avoid contention when receiving responses from the queue.
-        response_queues = { worker_id: mp.Queue() for worker_id in range(num_workers) }
+        response_queues = { worker_id: mp.Queue() for worker_id in range(n_workers) }
         request_queue = mp.Queue()
         result_queue = mp.Queue()
 
@@ -96,7 +99,12 @@ class MCTSAgent:
 
                 processes = []
 
-                for worker_id in range(num_workers):
+                for worker_id in range(n_workers):
+
+                    # Each process has its own seed for reproducibility and to prevent the same
+                    # random number generation (unique in base n_workers)
+                    process_seed = (step_count * n_workers + worker_id) % PROCESS_SEED_MODULUS
+
                     p = mp.Process(
                         target=mcts_simulation_helper,
                         args=(
@@ -105,7 +113,8 @@ class MCTSAgent:
                             response_queues[worker_id],
                             worker_id,
                             result_queue,
-                            MCTS_ITERATIONS
+                            MCTS_ITERATIONS,
+                            process_seed
                         )
                     )
                     p.start()
@@ -225,11 +234,16 @@ def mcts_simulation_helper(
         worker_id: int,
         result_queue: mp.Queue,
         iterations: int,
+        process_seed: int,
     ) -> MonteCarloTreeNode:
     """
     Helper function used by a single process for parallel simulations that runs MCTS
     iterations on a single node and puts the results into the result queue.
     """
+
+    np.random.seed(process_seed)
+    torch.manual_seed(process_seed)
+    random.seed(process_seed)
 
     root_node = MonteCarloTreeNode(
         env=env,

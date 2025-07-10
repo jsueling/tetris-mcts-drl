@@ -48,7 +48,7 @@ class ExperienceReplayBuffer:
 
         batch_size = len(transitions)
 
-        states, tree_policies, rewards_to_go, legal_actions_masks = zip(*transitions)
+        states, tree_policies, legal_actions_masks, rewards_to_go = zip(*transitions)
 
         # Convert lists -> numpy arrays -> tensors (efficient conversion to tensors)
         states_cpu = torch.tensor(np.array(states, dtype=np.float32))

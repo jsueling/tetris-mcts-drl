@@ -1,8 +1,8 @@
 """Monte Carlo Tree Search (MCTS) algorithm implementation."""
 
 from typing import Dict, Optional
+import multiprocessing as mp
 
-import torch
 import numpy as np
 
 from tetris_env import Tetris
@@ -23,16 +23,20 @@ class MonteCarloTreeNode:
     def __init__(
         self,
         env: Tetris,
+        request_queue: mp.Queue,
+        response_queue: mp.Queue,
+        worker_id: int,
         parent: Optional["MonteCarloTreeNode"] = None,
-        is_root: bool = False,
         prior_probability=0.0,
-        model=None
+        is_root: bool = False,
     ):
 
         self.env = env
         self.parent: Optional["MonteCarloTreeNode"] = parent
-        self.model = model
         self.is_root = is_root
+        self.request_queue = request_queue
+        self.response_queue = response_queue
+        self.worker_id = worker_id
 
         # Backpropagation statistics
         self.visit_count = 0
@@ -64,8 +68,7 @@ class MonteCarloTreeNode:
     def get_best_child_by_puct(self) -> 'MonteCarloTreeNode':
         """
         Returns this node's child with the maximum pUCT value
-        (Predictor + Upper Confidence Bound for Trees),
-        normalising q-value estimates into the range [0, 1].
+        (Predictor + Upper Confidence Bound for Trees)
         """
         parent_visit_count = self.visit_count
         children = list(self.children.values())
@@ -86,17 +89,9 @@ class MonteCarloTreeNode:
         q_value_estimates = np.zeros_like(q_value_sums, dtype=np.float32)
         np.divide(q_value_sums, visit_counts, out=q_value_estimates, where=visit_counts > 0)
 
-        # Normalise q_value_estimates to [0, 1] range since the network outputs
-        # raw game scores (lines cleared) which must be normalised for balance
-        # between exploration and exploitation terms.
-        max_q_value_estimate = np.max(q_value_estimates)
-        min_q_value_estimate = np.min(q_value_estimates)
-        q_value_estimates_normalised = (q_value_estimates - min_q_value_estimate) \
-            / (max_q_value_estimate - min_q_value_estimate + 1e-8)
-
         # Balance exploration and exploitation using the modified pUCT formula:
         # Q(s, a) + c_puct * P(s, a) * sqrt(∑_b N(s, b)) / (N(s, a) + 1)
-        puct_values = q_value_estimates_normalised + C_PUCT * prior_probabilities \
+        puct_values = q_value_estimates + C_PUCT * prior_probabilities \
             * np.sqrt(parent_visit_count) / (visit_counts + 1)
 
         return children[np.argmax(puct_values)]
@@ -119,19 +114,13 @@ class MonteCarloTreeNode:
         - policy_logits: The logits for the action probabilities.
         - value: The estimated value of the current state.
         """
-
-        # Single inference is very inefficient.
-        # TODO: Batch multiple inferences together
-
-        self.model.eval()
-        with torch.no_grad():
-            state = self.env.get_state()
-            state_gpu = torch.tensor(
-                np.expand_dims(state, axis=0), # Add batch dimension
-                dtype=torch.float32
-            ).to(self.model.device)
-            # Forward pass through the neural network
-            policy_logits, value = self.model(state_gpu)
+        self.request_queue.put({
+            "state": self.env.get_state(),
+            "worker_id": self.worker_id
+        })
+        response = self.response_queue.get()
+        policy_logits = response["policy_logits"]
+        value = response["value"]
         return policy_logits, value
 
     def evaluate(self) -> float:
@@ -160,9 +149,6 @@ class MonteCarloTreeNode:
 
         # Evaluate as late as possible before expansion
         action_logits, q_value = self.nn_evaluation()
-
-        action_logits = action_logits.squeeze(0).cpu().numpy()
-        q_value = q_value.item()
 
         # Expansion:
 
@@ -200,9 +186,11 @@ class MonteCarloTreeNode:
 
             child_node = MonteCarloTreeNode(
                 env=copy_env,
+                request_queue=self.request_queue,
+                response_queue=self.response_queue,
+                worker_id=self.worker_id,
                 parent=self,
-                prior_probability=action_probabilities[action_index],
-                model=self.model
+                prior_probability=action_probabilities[action_index]
             )
 
             self.children[action_index] = child_node

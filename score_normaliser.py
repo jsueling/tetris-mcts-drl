@@ -1,0 +1,30 @@
+"""
+Normalises unbounded Tetris scores (lines cleared) by tracking a moving average of percentiles.
+This allows the agent to adapt to its own changing score distribution over time
+and normalise scores to a bounded range. This implementation uses the tanh function
+"""
+
+import numpy as np
+
+class ScoreNormaliser:
+    """
+    Normalises unbounded scores to a bounded range
+    by keeping track of a moving average of percentile scores.
+    """
+    def __init__(self, alpha=0.99, percentile=95, eps=1e-5):
+        self.normalising_factor = 1.0
+        self.alpha = alpha
+        self.percentile = percentile
+        self.eps = eps
+
+    def update(self, scores):
+        """Update normalising factor with batch of scores which are rewards-to-go here"""
+        # Calculates the score bound at which self.percentile of scores in this batch lies below
+        percentile_score_bound = np.percentile(scores, self.percentile)
+        # Step away from old normalising_factor towards the bound
+        self.normalising_factor = self.alpha * self.normalising_factor + \
+            (1 - self.alpha) * percentile_score_bound
+
+    def normalise(self, score):
+        """Normalise score to [-1, 1] range using adaptive normalising factor"""
+        return np.tanh(score / (self.normalising_factor + self.eps))

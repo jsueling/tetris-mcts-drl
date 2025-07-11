@@ -14,4 +14,4 @@ if __name__ == "__main__":
     torch.manual_seed(RANDOM_SEED)
 
     agent = MCTSAgent()
-    agent.train()
+    agent.train_ensemble()

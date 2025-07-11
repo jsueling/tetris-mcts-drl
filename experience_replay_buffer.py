@@ -20,7 +20,7 @@ class ExperienceReplayBuffer:
         # The buffer will store transitions in the form of tuples:
         # 1. State will be (grid + tetromino type)
         # 2. Tree policy derived from MCTS associated with the state
-        # 3. Value for the state calculated as reward-to-go when the actual game ends
+        # 3. Value for the state calculated as normalised reward-to-go when the episode ends
         # 4. Legal actions mask for the current state
 
         self.states = torch.zeros((max_size, 8, 20, 10), dtype=torch.float32, device=device)
@@ -28,13 +28,13 @@ class ExperienceReplayBuffer:
         self.rewards_to_go = torch.zeros((max_size,), dtype=torch.float32, device=device)
         self.legal_actions_masks = torch.zeros((max_size, 40), dtype=torch.bool, device=device)
 
-    def add_transition(self, transition):
+    def add_transition(self, state, tree_policy, reward_to_go, legal_actions_mask):
         """Add a single transition to the buffer."""
 
-        self.states[self.position] = transition[0]
-        self.tree_policies[self.position] = transition[1]
-        self.rewards_to_go[self.position] = transition[2]
-        self.legal_actions_masks[self.position] = transition[3]
+        self.states[self.position] = state
+        self.tree_policies[self.position] = tree_policy
+        self.rewards_to_go[self.position] = reward_to_go
+        self.legal_actions_masks[self.position] = legal_actions_mask
 
         # Update position, wrapping around if necessary
         self.position = (self.position + 1) % self.max_size
@@ -98,11 +98,10 @@ class ExperienceReplayBuffer:
         """
         Uniform randomly samples a batch of transitions from the buffer.
         Returns:
-            A tuple containing:
-            - A batch of states (shape: [batch_size, 1, 20, 10])
-            - A batch of tree policies (shape: [batch_size, 40])
-            - A batch of rewards-to-go (shape: [batch_size])
-            - A batch of legal actions masks (shape: [batch_size, 40])
+        - states (shape: [batch_size, 1, 20, 10])
+        - tree policies (shape: [batch_size, 40])
+        - rewards-to-go (shape: [batch_size])
+        - legal actions masks (shape: [batch_size, 40])
         """
 
         current_size = self.max_size if self.full else self.position

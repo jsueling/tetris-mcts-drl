@@ -20,18 +20,21 @@ class ResNet(nn.Module):
     """
     Residual tower neural network for Tetris following the AGZ implementation
     The model consists of:
-    - A single convolutional layer to process the state representation (grid + Tetromino)
+    - A single convolutional block to process the state representation (grid + Tetromino)
+        - Conv2d with 256 filters, kernel size 3, stride 1
+        - Batch normalisation
+        - ReLU activation
     - A series of residual blocks to extract features (19 or 39)
     - Two output heads:
         - Policy head: maps the features to logits for each action available
             - Conv2d with 2 channels, kernel size 1, stride 1
-            - Batch normalization
+            - Batch normalisation
             - ReLU activation
             - Flatten
             - Linear layer to map the flattened features to action logits
         - Value head: maps the features to a single score value
             - Conv2d with 1 channel, kernel size 1, stride 1
-            - Batch normalization
+            - Batch normalisation
             - ReLU activation
             - Flatten
             - Hidden Linear layer with 256 units

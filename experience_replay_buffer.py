@@ -40,15 +40,17 @@ class ExperienceReplayBuffer:
         self.position = (self.position + 1) % self.max_size
         self.full = self.full or self.position == 0
 
-    def add_transitions_batch(self, transitions):
+    def add_transitions_batch(self, states, tree_policies, rewards_to_go, legal_actions_masks):
         """
         Add batch of transitions to the buffer, making efficient use of vectorised operations
         and minimising CPU-GPU communication/transfer cost.
         """
 
-        batch_size = len(transitions)
+        assert states.shape[0] == tree_policies.shape[0] == \
+            rewards_to_go.shape[0] == legal_actions_masks.shape[0], \
+            "All input arrays must have the same batch size."
 
-        states, tree_policies, legal_actions_masks, rewards_to_go = zip(*transitions)
+        batch_size = states.shape[0]
 
         # Convert lists -> numpy arrays -> tensors (efficient conversion to tensors)
         states_cpu = torch.tensor(np.array(states, dtype=np.float32))

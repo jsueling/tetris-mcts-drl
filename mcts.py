@@ -10,7 +10,7 @@ from tetris_env import Tetris
 ACTION_SPACE = 40 # Rotations * Columns
 C_PUCT = 1.0  # Hyperparameter modulating prior-guided exploration bonus in pUCT
 
-# Dirichlet noise parameters for exploration, applied to the root node only
+# Dirichlet noise parameters for exploration, applied to actions at the root node only
 DIRICHLET_ALPHA = 0.03
 DIRICHLET_EPSILON = 0.25
 

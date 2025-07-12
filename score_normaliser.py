@@ -17,14 +17,14 @@ class ScoreNormaliser:
         self.percentile = percentile
         self.eps = eps
 
-    def update(self, scores):
+    def update(self, raw_scores):
         """Update normalising factor with batch of scores which are rewards-to-go here"""
         # Calculates the score bound at which self.percentile of scores in this batch lies below
-        percentile_score_bound = np.percentile(scores, self.percentile)
+        percentile_score_bound = np.percentile(raw_scores, self.percentile)
         # Step away from old normalising_factor towards the bound
         self.normalising_factor = self.alpha * self.normalising_factor + \
             (1 - self.alpha) * percentile_score_bound
 
-    def normalise(self, score):
+    def normalise(self, raw_score):
         """Normalise score to [-1, 1] range using adaptive normalising factor"""
-        return np.tanh(score / (self.normalising_factor + self.eps))
+        return np.tanh(raw_score / (self.normalising_factor + self.eps))

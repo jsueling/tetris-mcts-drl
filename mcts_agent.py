@@ -12,7 +12,7 @@ from tqdm import tqdm
 from mcts import MonteCarloTreeNode
 from experience_replay_buffer import ExperienceReplayBuffer
 from tetris_env import Tetris
-from model import ResNet
+from model import A0ResNet, ResNet
 from score_normaliser import ScoreNormaliser
 from inference_server import InferenceServer
 
@@ -24,7 +24,8 @@ RANDOM_SEED_MODULUS = 2 ** 32 # Seed methods accept 32-bit integers only
 class MCTSAgent:
     """MCTS + DRL agent for playing Tetris."""
     def __init__(self, batch_size=BATCH_SIZE):
-        self.model = ResNet(num_residual_blocks=19, num_actions=ACTION_SPACE)
+        # self.model = A0ResNet(num_residual_blocks=19, num_actions=ACTION_SPACE)
+        self.model = ResNet([2, 2, 2, 2], num_actions=ACTION_SPACE)
         self.buffer = ExperienceReplayBuffer(
             batch_size=batch_size,
             max_size=1000000,
@@ -89,7 +90,6 @@ class MCTSAgent:
             # Reset the environment per episode, generating the first Tetromino of the sequence
             self.env.reset()
             transitions = []
-            rewards_to_go = []
             done = False
             while not done:
 
@@ -117,13 +117,13 @@ class MCTSAgent:
                 transitions.append([
                     state_before_action,
                     tree_policy,
-                    legal_actions
+                    legal_actions,
+                    score_before_action
                 ])
-                rewards_to_go.append(score_before_action)
 
                 if all([
                     # Allows for sufficient diversity in transitions before sampling
-                    step_count >= 1e4,
+                    step_count >= 1e3,
                     # 1:1 ratio of data generated-to-consumed means that
                     # each transition is expected to be sampled for training
                     # once before being replaced on average.
@@ -136,6 +136,8 @@ class MCTSAgent:
                 self.env.create_tetromino(self.env.generate_next_tetromino_type())
 
                 step_count += 1
+
+            # Episode end
 
             final_score = self.env.score
 
@@ -166,13 +168,23 @@ class MCTSAgent:
             # The assumption is that moves that were improvements on average score in
             # the past should also be improvements on average score in the future which is a
             # reasonable assumption for Tetris due to the repeated nature of the game.
-            for i, transition in enumerate(transitions):
-                rewards_to_go[i] = final_score - rewards_to_go[i]
-                normalised_rtg = self.score_normaliser.normalise(rewards_to_go[i])
-                transition.append(normalised_rtg)
 
+            states = np.stack([t[0] for t in transitions])
+            tree_policies = np.stack([t[1] for t in transitions])
+            legal_actions_masks = np.stack([t[2] for t in transitions])
+            scores_before_action = np.stack([t[3] for t in transitions])
+            rewards_to_go = final_score - scores_before_action
+            # Calculate normalised rewards-to-go (RTG)
+            normalised_rewards_to_go = self.score_normaliser.normalise(rewards_to_go)
+            # Add all transitions to the experience replay buffer
+            self.buffer.add_transitions_batch(
+                states,
+                tree_policies,
+                normalised_rewards_to_go,
+                legal_actions_masks
+            )
+            # Update the normalising factor per batch of rewards-to-go
             self.score_normaliser.update(rewards_to_go)
-            self.buffer.add_transitions_batch(transitions)
 
         inference_server.stop()
 
@@ -187,9 +199,9 @@ def run_ensemble_mcts(
         exploratory_step_threshold=30
     ):
     """
-    Multiple workers run MCTS iterations in parallel from the root.
-    The stochastic outcome (Tetromino generation) is determinised
-    per node expansion i.e. a single future is sampled.
+    Multiple workers run MCTS iterations in parallel from the root node.
+    The stochastic outcome (Tetromino generation) is determinised per
+    node expansion i.e. a single future is sampled and shared among child nodes.
     Therefore, we take the average/majority vote from many parallel determinisations
     to get a more robust action decision/transitions at the root.
 

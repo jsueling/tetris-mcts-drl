@@ -16,9 +16,9 @@ import numpy as np
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-class ResNet(nn.Module):
+class A0ResNet(nn.Module):
     """
-    Residual tower neural network for Tetris following the AGZ implementation
+    Residual tower neural network for Tetris following the AlphaZero implementation
     The model consists of:
     - A single convolutional block to process the state representation (grid + Tetromino)
         - Conv2d with 256 filters, kernel size 3, stride 1
@@ -44,9 +44,14 @@ class ResNet(nn.Module):
     The model is trained using a combination of cross-entropy loss for the policy head
     and mean squared error loss for the value head.
     """
-    def __init__(self, num_residual_blocks=19, num_actions=40, num_channels=256, device=DEVICE):
-
-        super(ResNet, self).__init__()
+    def __init__(
+        self,
+        num_residual_blocks=19,
+        num_actions=40,
+        num_channels=256,
+        device=DEVICE
+    ):
+        super(A0ResNet, self).__init__()
 
         self.conv1 = nn.Sequential(
             # 1 channel for the grid + 7 channels for the one-hot encoded Tetromino
@@ -57,7 +62,7 @@ class ResNet(nn.Module):
 
         self.residual_blocks = nn.Sequential(
             *[
-                ResidualBlock(
+                A0ResBlock(
                     in_channels=num_channels,
                     out_channels=num_channels,
                 ) for _ in range(num_residual_blocks)
@@ -180,9 +185,9 @@ class ResNet(nn.Module):
 
         return policy_loss + value_loss
 
-class ResidualBlock(nn.Module):
+class A0ResBlock(nn.Module):
     """
-    A residual block for the ResNet model.
+    A residual block for the A0ResNet model.
     Each residual block consists of:
     - Conv2d with 256 channels, kernel size 3, stride 1
     - Batch normalization
@@ -193,7 +198,7 @@ class ResidualBlock(nn.Module):
     - ReLU activation
     """
     def __init__(self, in_channels, out_channels):
-        super(ResidualBlock, self).__init__()
+        super(A0ResBlock, self).__init__()
         self.conv1 = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(out_channels),
@@ -210,6 +215,123 @@ class ResidualBlock(nn.Module):
         residual = x
         out = self.conv1(x)
         out = self.conv2(out)
+        out += residual
+        out = self.relu(out)
+        return out
+
+class ResNet(A0ResNet):
+    """Residual neural network for Tetris."""
+    def __init__(self, layers, num_actions, num_channels=64, device=DEVICE):
+        super(ResNet, self).__init__()
+        self.input_channels = num_channels
+        self.conv1 = nn.Sequential(
+            # 1 channel for the grid + 7 channels for the one-hot encoded Tetromino
+            nn.Conv2d(in_channels=8, out_channels=num_channels, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(num_channels),
+            nn.ReLU()
+        )
+        self.residual_blocks = nn.Sequential(
+            self._make_layer(ResBlock, num_channels, layers[0], stride=1),
+            self._make_layer(ResBlock, num_channels * 2, layers[1], stride=2),
+            self._make_layer(ResBlock, num_channels * 4, layers[2], stride=2),
+            self._make_layer(ResBlock, num_channels * 8, layers[3], stride=1),
+        )
+
+        # Number of spatial features after the last residual block
+        count_spatial_features = num_channels * 8
+
+        policy_head_out_channels = 2
+        value_head_out_channels = 1
+
+        with torch.no_grad():
+            # Calculate the output size after the last residual block using a dummy input
+            dummy_input = torch.zeros(1, 8, 20, 10)
+            dummy_input = self.conv1(dummy_input)
+            dummy_output = self.residual_blocks(dummy_input)
+            policy_head_output_size = np.prod(dummy_output.shape[2:]) * policy_head_out_channels
+            value_head_output_size = np.prod(dummy_output.shape[2:]) * value_head_out_channels
+
+        # Policy head maps the combined features to logits for each action available
+        self.policy_head = nn.Sequential(
+            nn.Conv2d(
+                in_channels=count_spatial_features,
+                out_channels=policy_head_out_channels,
+                kernel_size=1,
+                stride=1
+            ),
+            nn.BatchNorm2d(policy_head_out_channels),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(policy_head_output_size, num_actions)
+        )
+
+        # Value head maps the combined features to a single score value
+        self.value_head = nn.Sequential(
+            nn.Conv2d(
+                in_channels=count_spatial_features,
+                out_channels=value_head_out_channels,
+                kernel_size=1,
+                stride=1
+            ),
+            nn.BatchNorm2d(value_head_out_channels),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(value_head_output_size, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1),
+            nn.Tanh()
+        )
+
+        self.device = device
+        self.to(device)
+
+        self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-4)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimiser,
+            patience=3,
+            factor=0.5
+        )
+
+        self.mse_loss = nn.MSELoss()
+
+    def _make_layer(self, block, output_channels, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.input_channels != output_channels:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.input_channels, output_channels, kernel_size=1, stride=stride),
+                nn.BatchNorm2d(output_channels),
+            )
+        layers = []
+        layers.append(block(self.input_channels, output_channels, stride, downsample))
+        self.input_channels = output_channels
+        for _ in range(1, blocks):
+            layers.append(block(self.input_channels, output_channels))
+
+        return nn.Sequential(*layers)
+
+class ResBlock(nn.Module):
+    """A residual block for the ResNet model."""
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+        super(ResBlock, self).__init__()
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU()
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(out_channels)
+        )
+        self.downsample = downsample
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        """Forward pass through a residual block"""
+        residual = x
+        out = self.conv1(x)
+        out = self.conv2(out)
+        if self.downsample:
+            residual = self.downsample(x)
         out += residual
         out = self.relu(out)
         return out

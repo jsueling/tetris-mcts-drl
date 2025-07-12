@@ -68,6 +68,8 @@ class InferenceServer:
                 policy_logits = policy_logits.cpu().numpy()
                 value = value.cpu().numpy()
 
+            # Send responses to the queues corresponding to the
+            # worker ids of the sent requests
             for req, pol, val in zip(requests, policy_logits, value):
                 worker_id = req['worker_id']
                 response_queues[worker_id].put({

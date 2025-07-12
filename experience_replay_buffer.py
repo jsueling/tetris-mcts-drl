@@ -46,10 +46,6 @@ class ExperienceReplayBuffer:
         and minimising CPU-GPU communication/transfer cost.
         """
 
-        assert states.shape[0] == tree_policies.shape[0] == \
-            rewards_to_go.shape[0] == legal_actions_masks.shape[0], \
-            "All input arrays must have the same batch size."
-
         batch_size = states.shape[0]
 
         # Convert lists -> numpy arrays -> tensors (efficient conversion to tensors)

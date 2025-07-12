@@ -218,7 +218,7 @@ class Tetris:
 
     def get_legal_actions(self):
         """
-        Returns a list of legal actions for the current Tetromino.
+        Returns a list of legal actions over the action space for the current Tetromino.
         Each action is represented as 2 digits in base 10:
         - The first digit is the rotation (0-3).
         - The second digit is the column (0-9).

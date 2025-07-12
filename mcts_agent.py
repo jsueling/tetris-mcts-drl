@@ -112,6 +112,7 @@ class MCTSAgent:
                 state_before_action = self.env.get_state()
 
                 legal_actions = np.zeros(ACTION_SPACE, dtype=np.float32)
+                # Upon root node expansion, child nodes are created for each legal action
                 legal_actions[available_actions] = 1.0
 
                 transitions.append([
@@ -196,7 +197,8 @@ def run_ensemble_mcts(
         step_count,
         prev_step_count,
         n_workers,
-        exploratory_step_threshold=30
+        exploratory_step_threshold=30,
+        tau=1.0 # Temperature parameter for action selection
     ):
     """
     Multiple workers run MCTS iterations in parallel from the root node.
@@ -261,9 +263,10 @@ def run_ensemble_mcts(
     # If no actions are available, the game will end
     if len(available_actions) == 0:
         chosen_action = -1
-    # For the first 30 steps of each episode, tau=1.0 which is equivalent to
-    # sampling actions proportional to their visit counts.
+    # For the first 30 steps of each episode, allow exploration where
+    # tau modulates exploration in action selection.
     elif steps_since_episode_start < exploratory_step_threshold:
+        mean_visit_counts = mean_visit_counts ** (1 / tau)
         visit_probabilities = mean_visit_counts / np.sum(mean_visit_counts)
         tree_policy[available_actions] = visit_probabilities
         chosen_action = np.random.choice(ACTION_SPACE, p=tree_policy)

@@ -123,7 +123,7 @@ class A0ResNet(nn.Module):
 
         self.mse_loss = nn.MSELoss()
 
-    def forward(self, state):
+    def forward(self, state) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass through the ResNet model. Returns policy logits and value prediction
         for a given state (grid + tetromino).
@@ -137,12 +137,12 @@ class A0ResNet(nn.Module):
         return policy_prediction, value_prediction
 
     def loss(
-            self,
-            states,
-            tree_policies,
-            ground_truth_values,
-            legal_action_masks,
-        ):
+        self,
+        states,
+        tree_policies,
+        ground_truth_values,
+        legal_action_masks,
+    ) -> torch.Tensor:
         """
         Compute the loss for the model. This consists of cross-entropy loss
         between the tree policies and the predicted action probabilities,

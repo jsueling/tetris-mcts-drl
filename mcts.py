@@ -41,15 +41,20 @@ class MonteCarloTreeNode:
         self.worker_id = worker_id
 
         # Backpropagation statistics
-        self.visit_count = 0
-        self.q_value_sum = 0.0
+        self.visit_count = 0 # N(s, a)
+        self.q_value_sum = 0.0 # W(s, a), total action value
+        # Q(s, a) is not stored directly, but computed as W(s, a) / N(s, a)
 
-        # NN priors
-        # Prior probability will be given by the parent's evaluation
-        # during this node's instantiation
+        # The leaf node is expanded and each edge is initialised to
+        # { N(s, a) = 0, W(s, a) = 0, Q(s, a) = 0, P(s, a) = p_a }
+        # where (v, p_a) = f(s) is the NN evaluation of the previous state,
+        # the value is then backed up from leaf to root.
+
+        # == NN priors ==
+        # Prior probability will be given by the parent's evaluation during
+        # this node's instantiation. It represents the probability of taking
+        # the action leading to the state of this node.
         self.prior_probability = prior_probability
-        # Prior Q-value will be zero until this node is evaluated.
-        self.q_value = 0.0
 
         self.children: Dict[int, 'MonteCarloTreeNode'] = {}
 
@@ -90,7 +95,8 @@ class MonteCarloTreeNode:
         q_value_estimates = np.zeros_like(q_value_sums, dtype=np.float32)
         np.divide(q_value_sums, visit_counts, out=q_value_estimates, where=visit_counts > 0)
 
-        # Balance exploration and exploitation using the modified pUCT formula:
+        # Balance exploration and exploitation using the modified pUCT formula to recursively
+        # select the child node with the highest pUCT value until reaching a leaf node:
         # Q(s, a) + c_puct * P(s, a) * sqrt(∑_b N(s, b)) / (N(s, a) + 1)
         puct_values = q_value_estimates + C_PUCT * prior_probabilities \
             * np.sqrt(parent_visit_count) / (visit_counts + 1)
@@ -130,18 +136,21 @@ class MonteCarloTreeNode:
         achieving the following:
         1. Simulation/rollout to get a Q-value estimate of the action leading to this state.
         2. Expansion, creating child nodes for all legal actions from this state.
+        Returns:
+        - q_value: The predicted Q-value of the action leading to this state or the score
+        if the state is terminal.
         """
 
-        # If this leaf node is terminal, return the score immediately
+        # If this leaf node is terminal, return the score as the Q-value.
         if self.is_terminal:
             return self.env.score
 
         # Simulation:
 
-        # Generate all legal actions from the current state
+        # Generate a mask over the action space of legal actions given the current state
         legal_actions = self.env.get_legal_actions()
 
-        # Leaf nodes with no legal actions cannot be expanded, and become terminal
+        # Leaf nodes with no legal actions cannot be expanded, the score is final
         if not np.any(legal_actions):
             self.is_terminal = True
             return self.env.score
@@ -160,7 +169,7 @@ class MonteCarloTreeNode:
         action_probabilities = exponential_action_logits / np.sum(exponential_action_logits)
 
         # Add Dirichlet noise to root node's action probabilities for sufficient exploration
-        if self.is_root:
+        if self.is_root is True:
             dirichlet_noise = np.random.dirichlet(
                 # Noise is distributed among legal actions only
                 np.full(np.sum(legal_actions), DIRICHLET_ALPHA)
@@ -192,6 +201,8 @@ class MonteCarloTreeNode:
                 prior_probability=action_probabilities[action_index]
             )
 
+            # Populate the children dictionary with the action index as key
+            # and child node as value
             self.children[action_index] = child_node
 
         return q_value
@@ -202,9 +213,8 @@ class MonteCarloTreeNode:
         traversing parent nodes until reaching the root node.
         """
         node = self
-        # Set initial Q-value for the node being evaluated
-        node.q_value = q_value
         # Backpropagate the Q-value sums and visit count to all parent nodes
+        # after evaluating the leaf node
         while node is not None:
             node.visit_count += 1
             node.q_value_sum += q_value
@@ -230,7 +240,7 @@ class MonteCarloTreeNode:
 
         if len(self.children) == 0:
             # If there are no possible actions (no children from the root node),
-            # return -1 indicating no action can be taken and an empty tree policy
+            # return -1 indicating no action can be taken and a default tree policy
             return -1, tree_policy
 
         actions = list(self.children.keys())

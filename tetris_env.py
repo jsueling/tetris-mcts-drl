@@ -243,7 +243,7 @@ class Tetris:
 
         # Get the number of unique rotations for the current Tetromino
         # since Tetrominoes have symmetric rotations.
-        unique_rotations = len(Tetromino.figures[self.current_tetromino.type])
+        unique_rotations = len(Tetromino.figures[self.get_current_tetromino_type()])
 
         for rotation in range(unique_rotations):
             for col in range(max_columns):
@@ -270,13 +270,18 @@ class Tetris:
         - done (bool): True if the game is over, False otherwise.
         - score (int): The current score after the action is applied.
         """
+        if action < 0 or action >= self.width * 4:
+            return True, self.score
+
         rotation, col = divmod(action, self.width)
         self.current_tetromino.spawn(x=col, rotation=rotation)
+
         if self.intersects():
-            self.done = True
-        else:
-            # Current Tetromino is placed and removed from the game state
-            self.hard_drop(colour)
+            return True, self.score
+
+        # Current Tetromino is placed and removed from the game state
+        self.hard_drop(colour)
+
         return self.done, self.score
 
     def reset(self):
@@ -293,7 +298,7 @@ class Tetris:
 
     def copy(self):
         """Create a deep copy of the current game state."""
-        new_env = Tetris(self.height, self.width, self.tetromino_randomisation_scheme)
+        new_env = Tetris()
         np.copyto(new_env.grid, self.grid)
         new_env.score = self.score
         new_env.done = self.done

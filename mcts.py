@@ -1,4 +1,4 @@
-"""Monte Carlo Tree Search (MCTS) algorithm implementation."""
+"""Monte Carlo Tree Search (MCTS) algorithm implementation for Tetris"""
 
 from typing import Dict, Optional
 import multiprocessing as mp
@@ -10,14 +10,15 @@ from tetris_env import Tetris
 ACTION_SPACE = 40 # Rotations * Columns
 C_PUCT = 1.0  # Hyperparameter modulating prior-guided exploration bonus in pUCT
 
-# Dirichlet noise parameters for exploration
+# Dirichlet noise parameters for exploration, applied to actions at the root node only
 DIRICHLET_ALPHA = 0.03
 DIRICHLET_EPSILON = 0.25
 
 class MonteCarloTreeNode:
     """
-    A node in the tree representing a game state.
-    Actions connect game states as edges (parent-child relation).
+    A node in the tree representing a game state (Tetris grid and current piece).
+    Actions are final placements of tetrominoes that connect game states as edges
+    (parent-child relation).
     """
 
     def __init__(
@@ -28,12 +29,13 @@ class MonteCarloTreeNode:
         worker_id: int,
         parent: Optional["MonteCarloTreeNode"] = None,
         prior_probability=0.0,
-        is_root: bool = False,
+        is_root: bool = False
     ):
 
         self.env = env
         self.parent: Optional["MonteCarloTreeNode"] = parent
         self.is_root = is_root
+        self.is_terminal = False
         self.request_queue = request_queue
         self.response_queue = response_queue
         self.worker_id = worker_id
@@ -48,7 +50,6 @@ class MonteCarloTreeNode:
         self.prior_probability = prior_probability
         # Prior Q-value will be zero until this node is evaluated.
         self.q_value = 0.0
-        self.is_evaluated = False
 
         self.children: Dict[int, 'MonteCarloTreeNode'] = {}
 
@@ -125,15 +126,14 @@ class MonteCarloTreeNode:
 
     def evaluate(self) -> float:
         """
-        Use the dual-headed neural network to evaluate the current state achieving the following:
+        Use the dual-headed neural network to evaluate the state of this leaf node
+        achieving the following:
         1. Simulation/rollout to get a Q-value estimate of the action leading to this state.
         2. Expansion, creating child nodes for all legal actions from this state.
         """
 
-        # Tree policy has reached a leaf node which is terminal and has been evaluated.
-        # Simulation is skipped
-        # Return the actual score as the terminal value
-        if self.is_evaluated is True:
+        # If this leaf node is terminal, return the score immediately
+        if self.is_terminal:
             return self.env.score
 
         # Simulation:
@@ -141,10 +141,9 @@ class MonteCarloTreeNode:
         # Generate all legal actions from the current state
         legal_actions = self.env.get_legal_actions()
 
-        # Tree policy has reached a leaf node which is terminal but has not yet
-        # been evaluated. Set evaluated to true and return the actual score as the terminal value
+        # Leaf nodes with no legal actions cannot be expanded, and become terminal
         if not np.any(legal_actions):
-            self.is_evaluated = True
+            self.is_terminal = True
             return self.env.score
 
         # Evaluate as late as possible before expansion
@@ -169,8 +168,8 @@ class MonteCarloTreeNode:
             action_probabilities[legal_actions] *= (1 - DIRICHLET_EPSILON)
             action_probabilities[legal_actions] += DIRICHLET_EPSILON * dirichlet_noise
 
-        # Determinise the generation of the next Tetromino for all child nodes.
-        # This means all actions share the same stochastic outcome once the node is evaluated.
+        # Determinised sequence of Tetrominoes, all children share the same next Tetromino
+        # i.e. all actions share the same stochastic outcome once the node is evaluated.
         next_tetromino_type = self.env.generate_next_tetromino_type()
 
         for action_index in range(ACTION_SPACE):
@@ -195,8 +194,6 @@ class MonteCarloTreeNode:
 
             self.children[action_index] = child_node
 
-        # Mark this node as evaluated
-        self.is_evaluated = True
         return q_value
 
     def backpropagate(self, q_value: float):
@@ -236,13 +233,17 @@ class MonteCarloTreeNode:
             # return -1 indicating no action can be taken and an empty tree policy
             return -1, tree_policy
 
+        actions = list(self.children.keys())
+
         if tau == 0.0:
             # If tau is at minimum, select action greedily by the maximum visit count
-            action = max(self.children, key=lambda action: self.children[action].visit_count)
-            tree_policy[action] = 1.0
-            return action, tree_policy
+            chosen_action = max(
+                actions,
+                key=lambda action: self.children[action].visit_count
+            )
+            tree_policy[chosen_action] = 1.0
+            return chosen_action, tree_policy
 
-        actions = list(self.children.keys())
         visit_counts = np.array(
             [child.visit_count for child in self.children.values()],
             dtype=np.float32
@@ -252,8 +253,8 @@ class MonteCarloTreeNode:
         visit_counts = visit_counts ** (1 / tau)
         visit_probs = visit_counts / np.sum(visit_counts)
         # Select an action based on the probabilities derived from visit counts
-        action = np.random.choice(actions, p=visit_probs)
+        chosen_action = np.random.choice(actions, p=visit_probs)
 
         tree_policy[actions] = visit_probs
 
-        return action, tree_policy
+        return chosen_action, tree_policy

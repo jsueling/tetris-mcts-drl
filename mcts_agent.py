@@ -12,7 +12,7 @@ from tqdm import tqdm
 from mcts import MonteCarloTreeNode
 from experience_replay_buffer import ExperienceReplayBuffer
 from tetris_env import Tetris
-from model import A0ResNet, ResNet
+from model import A0ResNet, ResNet18
 from score_normaliser import ScoreNormaliser
 from inference_server import InferenceServer
 
@@ -25,7 +25,7 @@ class MCTSAgent:
     """MCTS + DRL agent for playing Tetris."""
     def __init__(self, batch_size=BATCH_SIZE):
         # self.model = A0ResNet(num_residual_blocks=19, num_actions=ACTION_SPACE)
-        self.model = ResNet([2, 2, 2, 2], num_actions=ACTION_SPACE)
+        self.model = ResNet18([2, 2, 2, 2], num_actions=ACTION_SPACE)
         self.buffer = ExperienceReplayBuffer(
             batch_size=batch_size,
             max_size=1000000,

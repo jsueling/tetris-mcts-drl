@@ -55,17 +55,21 @@ class A0ResNet(nn.Module):
 
         self.conv1 = nn.Sequential(
             # 1 channel for the grid + 7 channels for the one-hot encoded Tetromino
-            nn.Conv2d(in_channels=8, out_channels=num_channels, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(
+                in_channels=8,
+                out_channels=num_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False
+            ),
             nn.BatchNorm2d(num_channels),
             nn.ReLU()
         )
 
         self.residual_blocks = nn.Sequential(
             *[
-                A0ResBlock(
-                    in_channels=num_channels,
-                    out_channels=num_channels,
-                ) for _ in range(num_residual_blocks)
+                A0ResBlock(num_channels=num_channels) for _ in range(num_residual_blocks)
             ],
         )
 
@@ -86,7 +90,8 @@ class A0ResNet(nn.Module):
                 in_channels=num_channels,
                 out_channels=policy_head_out_channels,
                 kernel_size=1,
-                stride=1
+                stride=1,
+                bias=False
             ),
             nn.BatchNorm2d(policy_head_out_channels),
             nn.ReLU(),
@@ -100,7 +105,8 @@ class A0ResNet(nn.Module):
                 in_channels=num_channels,
                 out_channels=value_head_out_channels,
                 kernel_size=1,
-                stride=1
+                stride=1,
+                bias=False
             ),
             nn.BatchNorm2d(value_head_out_channels),
             nn.ReLU(),
@@ -197,16 +203,30 @@ class A0ResBlock(nn.Module):
     - The skip connection that adds the original input to the output of the second convolution
     - ReLU activation
     """
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, num_channels=256):
         super(A0ResBlock, self).__init__()
         self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(out_channels),
+            nn.Conv2d(
+                in_channels=num_channels,
+                out_channels=num_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False
+            ),
+            nn.BatchNorm2d(num_channels),
             nn.ReLU()
         )
         self.conv2 = nn.Sequential(
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(out_channels)
+            nn.Conv2d(
+                in_channels=num_channels,
+                out_channels=num_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False
+            ),
+            nn.BatchNorm2d(num_channels)
         )
         self.relu = nn.ReLU()
 
@@ -219,14 +239,21 @@ class A0ResBlock(nn.Module):
         out = self.relu(out)
         return out
 
-class ResNet(A0ResNet):
-    """Residual neural network for Tetris."""
+class ResNet18(A0ResNet):
+    """Residual neural network for Tetris based on the ResNet-18 architecture."""
     def __init__(self, layers, num_actions, num_channels=64, device=DEVICE):
-        super(ResNet, self).__init__()
+        super(ResNet18, self).__init__()
         self.input_channels = num_channels
         self.conv1 = nn.Sequential(
             # 1 channel for the grid + 7 channels for the one-hot encoded Tetromino
-            nn.Conv2d(in_channels=8, out_channels=num_channels, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(
+                in_channels=8,
+                out_channels=num_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False
+            ),
             nn.BatchNorm2d(num_channels),
             nn.ReLU()
         )
@@ -257,7 +284,8 @@ class ResNet(A0ResNet):
                 in_channels=count_spatial_features,
                 out_channels=policy_head_out_channels,
                 kernel_size=1,
-                stride=1
+                stride=1,
+                bias=False
             ),
             nn.BatchNorm2d(policy_head_out_channels),
             nn.ReLU(),
@@ -271,7 +299,8 @@ class ResNet(A0ResNet):
                 in_channels=count_spatial_features,
                 out_channels=value_head_out_channels,
                 kernel_size=1,
-                stride=1
+                stride=1,
+                bias=False
             ),
             nn.BatchNorm2d(value_head_out_channels),
             nn.ReLU(),
@@ -298,11 +327,20 @@ class ResNet(A0ResNet):
         downsample = None
         if stride != 1 or self.input_channels != output_channels:
             downsample = nn.Sequential(
-                nn.Conv2d(self.input_channels, output_channels, kernel_size=1, stride=stride),
+                nn.Conv2d(
+                    self.input_channels,
+                    output_channels,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False
+                ),
                 nn.BatchNorm2d(output_channels),
             )
         layers = []
         layers.append(block(self.input_channels, output_channels, stride, downsample))
+        # The first layer matches the downsample in how it changes the number of channels
+        # and the spatial dimensions (stride). This is done so that the residual shape matches
+        # the output shape of the block.
         self.input_channels = output_channels
         for _ in range(1, blocks):
             layers.append(block(self.input_channels, output_channels))
@@ -314,12 +352,26 @@ class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
         super(ResBlock, self).__init__()
         self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1),
+            nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=3,
+                stride=stride,
+                padding=1,
+                bias=False
+            ),
             nn.BatchNorm2d(out_channels),
             nn.ReLU()
         )
         self.conv2 = nn.Sequential(
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(
+                out_channels,
+                out_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False
+            ),
             nn.BatchNorm2d(out_channels)
         )
         self.downsample = downsample

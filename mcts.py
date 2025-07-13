@@ -141,19 +141,22 @@ class MonteCarloTreeNode:
         if the state is terminal.
         """
 
-        # If this leaf node is terminal, return the score as the Q-value.
+        # If this leaf node is terminal, in Tetris this is always counted as a loss
+        # since no further score can be accumulated from a terminal state.
+        # Return the minimum q-value possible: tanh from the value head (normalised Tetris scores
+        # based on rolling percentile).
         if self.is_terminal:
-            return self.env.score
+            return -1
 
         # Simulation:
 
         # Generate a mask over the action space of legal actions given the current state
         legal_actions = self.env.get_legal_actions()
 
-        # Leaf nodes with no legal actions cannot be expanded, the score is final
+        # Leaf nodes with no legal actions cannot be expanded
         if not np.any(legal_actions):
             self.is_terminal = True
-            return self.env.score
+            return -1
 
         # Evaluate as late as possible before expansion
         action_logits, q_value = self.nn_evaluation()

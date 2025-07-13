@@ -27,4 +27,7 @@ class ScoreNormaliser:
 
     def normalise(self, raw_score):
         """Normalise score to [-1, 1] range using adaptive normalising factor"""
-        return np.tanh(raw_score / (self.normalising_factor + self.eps))
+        # Since raw_score is non-negative, tanh maps it to [0, 1]
+        tanh_out = np.tanh(raw_score / (self.normalising_factor + self.eps))
+        # Scale to [-1, 1] range
+        return (tanh_out * 2) - 1

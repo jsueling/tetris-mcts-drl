@@ -268,21 +268,20 @@ class Tetris:
 
         Returns:
         - done (bool): True if the game is over, False otherwise.
-        - score (int): The current score after the action is applied.
         """
         if action < 0 or action >= self.width * 4:
-            return True, self.score
+            return True
 
         rotation, col = divmod(action, self.width)
         self.current_tetromino.spawn(x=col, rotation=rotation)
 
         if self.intersects():
-            return True, self.score
+            return True
 
         # Current Tetromino is placed and removed from the game state
         self.hard_drop(colour)
 
-        return self.done, self.score
+        return self.done
 
     def reset(self):
         """

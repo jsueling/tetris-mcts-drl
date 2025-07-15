@@ -1,6 +1,7 @@
 """Script for running the training of the MCTS agent."""
 
 import multiprocessing as mp
+import asyncio
 
 import random
 import numpy as np
@@ -22,4 +23,5 @@ if __name__ == "__main__":
         torch.backends.cudnn.benchmark = True
 
     agent = MCTSAgent()
-    agent.train_ensemble()
+    # agent.train_ensemble()
+    asyncio.run(agent.train_async())

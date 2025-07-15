@@ -17,9 +17,9 @@ from model import A0ResNet, ResNet18
 from score_normaliser import ScoreNormaliser
 from inference_server import InferenceServer, AsyncInferenceServer
 
-MCTS_ITERATIONS = 100 # Number of MCTS iterations per action selection
+MCTS_ITERATIONS = 1600 # Number of MCTS iterations per action selection
 ACTION_SPACE = 40 # Upper bound on possible actions for hard drop (rotations * columns placements)
-BATCH_SIZE = 32 # Batch size for experience replay
+BATCH_SIZE = 256 # Batch size for experience replay
 RANDOM_SEED_MODULUS = 2 ** 32 # Seed methods accept 32-bit integers only
 
 class MCTSAgent:
@@ -85,7 +85,7 @@ class MCTSAgent:
         inference_server.start()
 
         try:
-            for episode in tqdm(range(episodes)):
+            for _ in tqdm(range(episodes)):
 
                 start_time = time.time()
 
@@ -126,7 +126,7 @@ class MCTSAgent:
 
                     if all([
                         # Allows for sufficient diversity in transitions before sampling
-                        episode > 0,
+                        step_count > 1e3,
                         # 1:1 ratio of data generated-to-consumed means that
                         # each transition is expected to be sampled for training
                         # once before being replaced on average.
@@ -222,7 +222,7 @@ class MCTSAgent:
         inference_server.start()
 
         try:
-            for episode in tqdm(range(episodes)):
+            for _ in tqdm(range(episodes)):
 
                 start_time = time.time()
 
@@ -266,7 +266,7 @@ class MCTSAgent:
                         score_before_action
                     ])
 
-                    if episode > 0 and step_count % self.batch_size == 0:
+                    if step_count > 1e3 and step_count % self.batch_size == 0:
                         self.update()
 
                     # Update the environment with the selected action and next Tetromino

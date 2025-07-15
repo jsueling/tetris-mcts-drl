@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from mcts import MCTreeNodeDeterminised, MCTreeNodeChanceAsync
+from mcts import MCTreeNodeDeterminised, DecisionNodeAsync
 from experience_replay_buffer import ExperienceReplayBuffer
 from tetris_env import Tetris
 from model import A0ResNet, ResNet18
@@ -231,7 +231,7 @@ class MCTSAgent:
 
                 # Create the root node of the MCTS tree for this episode which will be iteratively
                 # expanded by the workers based on the most promising actions
-                root_node = MCTreeNodeChanceAsync(
+                root_node = DecisionNodeAsync(
                     env=self.env.copy(),
                     request_queue=request_queue,
                     response_queues=response_queues,
@@ -253,7 +253,7 @@ class MCTSAgent:
                     state_before_action = self.env.get_state()
 
                     legal_actions = np.zeros(ACTION_SPACE, dtype=np.float32)
-                    legal_actions[list(root_node.successor_nodes.keys())] = 1.0
+                    legal_actions[list(root_node.chance_node_children.keys())] = 1.0
 
                     chosen_action, tree_policy = root_node.decide_action(
                         tau=1.0 if (step_count - prev_step_count) < 30 else 0.0
@@ -329,7 +329,7 @@ class MCTSAgent:
             await inference_server.stop()
 
 async def run_async_mcts(
-    root_node: MCTreeNodeChanceAsync,
+    root_node: DecisionNodeAsync,
     iterations: int = MCTS_ITERATIONS,
     n_workers=10,
     is_episode_start: bool = False,

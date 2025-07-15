@@ -21,13 +21,13 @@ class ScoreNormaliser:
         """Update normalising factor with batch of scores which are rewards-to-go here"""
         # Calculates the score bound at which self.percentile of scores in this batch lies below
         percentile_score_bound = np.percentile(raw_scores, self.percentile)
-        # Step away from old normalising_factor towards the bound
+        # Step away from old normalising_factor towards the new percentile score bound
         self.normalising_factor = self.alpha * self.normalising_factor + \
             (1 - self.alpha) * percentile_score_bound
 
-    def normalise(self, raw_score):
-        """Normalise score to [-1, 1] range using adaptive normalising factor"""
-        # Since raw_score is non-negative, tanh maps it to [0, 1]
-        tanh_out = np.tanh(raw_score / (self.normalising_factor + self.eps))
+    def normalise(self, raw_scores):
+        """Normalise scores to [-1, 1] range using adaptive normalising factor"""
+        # Since raw_scores are non-negative, tanh maps them to [0, 1]
+        tanh_out = np.tanh(raw_scores / (self.normalising_factor + self.eps))
         # Scale to [-1, 1] range
         return (tanh_out * 2) - 1

@@ -1,7 +1,7 @@
 """
 Monte Carlo Tree Search (MCTS) algorithm implementation for Tetris. There are two implementations:
 1. Determinised Ensemble MCTS (MCTreeNodeDeterminised) - \
-    uses an isolated tree with a determinised sequence of Tetrominoes per worker.
+    uses separate trees per worker each with a separate determinised sequence of Tetrominoes.
 2. MCTS with Decision/Chance nodes - similar to single player Expectimax Search \
     (DecisionNodeAsync + ChanceNode) - uses async/await for concurrent shared tree expansion.
 """

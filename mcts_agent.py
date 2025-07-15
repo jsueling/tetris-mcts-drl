@@ -342,9 +342,8 @@ async def run_async_mcts(
     tasks = []
     for worker_id in range(n_workers):
 
-        # Stagger workers to allow the tree to be expanded slowly, preventing
-        # multiple workers from expanding the same node when the tree is still small
-        # at the start of an episode.
+        # At the start of an episode, stagger workers to allow the tree to be expanded slowly,
+        # preventing multiple workers from expanding the same node when the tree is still small.
         if is_episode_start:
             await asyncio.sleep(0.01)
 

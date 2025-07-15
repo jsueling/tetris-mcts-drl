@@ -18,29 +18,30 @@ class ExperienceReplayBuffer:
         self.full = False
 
         # The buffer will store transitions in the form of tuples:
-        # 1. State will be (grid + tetromino type)
-        # 2. Tree policy derived from MCTS associated with the state
+        # 1. State is (grid + tetromino type)
+        # 2. Tree policy is a probability vector over the action space derived from the visit counts
+        # of the tree search iterations associated with the state
         # 3. Value for the state calculated as normalised reward-to-go when the episode ends
-        # 4. Legal actions mask for the current state
+        # 4. Legal actions mask for the current state over the action space
 
         self.states = torch.zeros((max_size, 8, 20, 10), dtype=torch.float32, device=device)
         self.tree_policies = torch.zeros((max_size, 40), dtype=torch.float32, device=device)
-        self.rewards_to_go = torch.zeros((max_size,), dtype=torch.float32, device=device)
+        self.normalised_rtg = torch.zeros((max_size,), dtype=torch.float32, device=device)
         self.legal_actions_masks = torch.zeros((max_size, 40), dtype=torch.bool, device=device)
 
-    def add_transition(self, state, tree_policy, reward_to_go, legal_actions_mask):
+    def add_transition(self, state, tree_policy, normalised_rtg, legal_actions_mask):
         """Add a single transition to the buffer."""
 
         self.states[self.position] = state
         self.tree_policies[self.position] = tree_policy
-        self.rewards_to_go[self.position] = reward_to_go
+        self.normalised_rtg[self.position] = normalised_rtg
         self.legal_actions_masks[self.position] = legal_actions_mask
 
         # Update position, wrapping around if necessary
         self.position = (self.position + 1) % self.max_size
         self.full = self.full or self.position == 0
 
-    def add_transitions_batch(self, states, tree_policies, rewards_to_go, legal_actions_masks):
+    def add_transitions_batch(self, states, tree_policies, normalised_rtg, legal_actions_masks):
         """
         Add batch of transitions to the buffer, making efficient use of vectorised operations
         and minimising CPU-GPU communication/transfer cost.
@@ -51,13 +52,13 @@ class ExperienceReplayBuffer:
         # Convert lists -> numpy arrays -> tensors (efficient conversion to tensors)
         states_cpu = torch.tensor(np.array(states, dtype=np.float32))
         tree_policies_cpu = torch.tensor(np.array(tree_policies, dtype=np.float32))
-        rewards_to_go_cpu = torch.tensor(np.array(rewards_to_go, dtype=np.float32))
+        normalised_rtg_cpu = torch.tensor(np.array(normalised_rtg, dtype=np.float32))
         legal_actions_masks_cpu = torch.tensor(np.array(legal_actions_masks, dtype=np.float32))
 
         # Move tensors to the GPU in a single operation
         states_gpu = states_cpu.to(self.device)
         tree_policies_gpu = tree_policies_cpu.to(self.device)
-        rewards_to_go_gpu = rewards_to_go_cpu.to(self.device)
+        normalised_rtg_gpu = normalised_rtg_cpu.to(self.device)
         legal_actions_masks_gpu = legal_actions_masks_cpu.to(self.device)
 
         start = self.position
@@ -67,7 +68,7 @@ class ExperienceReplayBuffer:
         if end <= self.max_size:
             self.states[start:end] = states_gpu
             self.tree_policies[start:end] = tree_policies_gpu
-            self.rewards_to_go[start:end] = rewards_to_go_gpu
+            self.normalised_rtg[start:end] = normalised_rtg_gpu
             self.legal_actions_masks[start:end] = legal_actions_masks_gpu
             self.position = end
         # Case 2: Wrap-around
@@ -80,7 +81,7 @@ class ExperienceReplayBuffer:
 
             self.states[start:] = states_gpu[:remaining_buffer_space]
             self.tree_policies[start:] = tree_policies_gpu[:remaining_buffer_space]
-            self.rewards_to_go[start:] = rewards_to_go_gpu[:remaining_buffer_space]
+            self.normalised_rtg[start:] = normalised_rtg_gpu[:remaining_buffer_space]
             self.legal_actions_masks[start:] = legal_actions_masks_gpu[:remaining_buffer_space]
 
             # The second segment contains the elements that wrap around
@@ -88,7 +89,7 @@ class ExperienceReplayBuffer:
 
             self.states[:wrapped_end] = states_gpu[remaining_buffer_space:]
             self.tree_policies[:wrapped_end] = tree_policies_gpu[remaining_buffer_space:]
-            self.rewards_to_go[:wrapped_end] = rewards_to_go_gpu[remaining_buffer_space:]
+            self.normalised_rtg[:wrapped_end] = normalised_rtg_gpu[remaining_buffer_space:]
             self.legal_actions_masks[:wrapped_end] = legal_actions_masks_gpu[remaining_buffer_space:]
             self.position = wrapped_end
 
@@ -98,7 +99,7 @@ class ExperienceReplayBuffer:
         Returns:
         - states (shape: [batch_size, 1, 20, 10])
         - tree policies (shape: [batch_size, 40])
-        - rewards-to-go (shape: [batch_size])
+        - normalised rewards-to-go (shape: [batch_size])
         - legal actions masks (shape: [batch_size, 40])
         """
 
@@ -114,6 +115,6 @@ class ExperienceReplayBuffer:
         return (
             self.states[indices],
             self.tree_policies[indices],
-            self.rewards_to_go[indices],
+            self.normalised_rtg[indices],
             self.legal_actions_masks[indices]
         )

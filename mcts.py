@@ -183,8 +183,8 @@ class MCTreeNodeDeterminised:
         # which will give probability zero after softmax
         action_logits[~legal_actions] = -1e9
 
-        exponential_action_logits = np.exp(action_logits)
-        # Apply softmax to action logits to get action probabilities
+        # Numerically stable softmax computation to avoid overflow with large logits
+        exponential_action_logits = np.exp(action_logits - np.max(action_logits))
         action_probabilities = exponential_action_logits / np.sum(exponential_action_logits)
 
         # Add Dirichlet noise to root node's action probabilities for sufficient exploration
@@ -491,7 +491,8 @@ class DecisionNodeAsync:
 
         action_logits[~legal_actions] = -1e9
 
-        exponential_action_logits = np.exp(action_logits)
+        # Numerically stable softmax computation to avoid overflow with large logits
+        exponential_action_logits = np.exp(action_logits - np.max(action_logits))
         action_probabilities = exponential_action_logits / np.sum(exponential_action_logits)
 
         if self.is_root is True:

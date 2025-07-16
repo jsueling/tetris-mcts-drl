@@ -438,11 +438,19 @@ class DecisionNodeAsync:
             # by other workers.
             chance_node.virtual_loss += 1
 
-            # Randomly select one of the possible Tetrominoes
-            random_tetromino_index = np.random.randint(0, len(Tetromino.figures))
+            chance_children = chance_node.decision_node_children
 
-            # Stochastically transition to a decision node based on the best pUCT action
-            decision_node = chance_node.decision_node_children[random_tetromino_index]
+            least_visited_child = min(chance_children, key=lambda child: child.visit_count)
+
+            least_visited_indices = [
+                index for index, decision_node in enumerate(chance_children) if
+                decision_node.visit_count == least_visited_child.visit_count
+            ]
+
+            # Transition to a decision node based on the best pUCT action. Here we choose
+            # a child with minimum visit count selected randomly to converge to expected
+            # values faster since the distribution is randomly uniform.
+            decision_node = chance_children[np.random.choice(least_visited_indices)]
 
     async def nn_evaluation(self, worker_id: int):
         """

@@ -39,14 +39,14 @@ class MCTSAgent:
     def update(self):
         """Update the agent's model via experience replay"""
 
-        states, tree_policies, rewards_to_go, legal_actions_masks = self.buffer.sample()
+        states, tree_policies, normalised_rtg, legal_actions_masks = self.buffer.sample()
 
         self.model.train()
         self.model.optimiser.zero_grad()
         loss = self.model.loss(
             states,
             tree_policies,
-            rewards_to_go,
+            normalised_rtg,
             legal_actions_masks
         )
         loss.backward()
@@ -312,9 +312,12 @@ class MCTSAgent:
                 tree_policies = np.stack([t[1] for t in transitions])
                 legal_actions_masks = np.stack([t[2] for t in transitions])
                 scores_before_action = np.stack([t[3] for t in transitions])
+
+                # Calculate the return-to-go (RTG)
                 rewards_to_go = final_score - scores_before_action
-                # Calculate normalised rewards-to-go (RTG)
+                # Normalise the RTG to range [-1, 1] based on rolling average agent score
                 normalised_rewards_to_go = self.score_normaliser.normalise(rewards_to_go)
+
                 # Add all transitions to the experience replay buffer
                 self.buffer.add_transitions_batch(
                     states,

@@ -14,7 +14,7 @@ class Checkpoint:
 
     def __init__(self, name, buffer, model, score_normaliser):
 
-        directory = "../out/"
+        directory = "./out/"
         os.makedirs(directory, exist_ok=True)
         self.out_file_prefix = directory + name
         self.buffer = buffer

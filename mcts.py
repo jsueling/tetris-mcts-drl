@@ -449,7 +449,7 @@ class DecisionNodeAsync:
 
             # Transition to a decision node based on the best pUCT action. Here we choose
             # a child with minimum visit count selected randomly to converge to expected
-            # values faster since the distribution is randomly uniform.
+            # values faster since the distribution of tetrominoes is randomly uniform.
             decision_node = chance_children[np.random.choice(least_visited_indices)]
 
     async def nn_evaluation(self, worker_id: int):

@@ -2,6 +2,7 @@
 
 import multiprocessing as mp
 import asyncio
+import argparse
 
 import random
 import numpy as np
@@ -11,17 +12,38 @@ from mcts_agent import MCTSAgent
 
 if __name__ == "__main__":
 
-    RANDOM_SEED = 42
-    random.seed(RANDOM_SEED)
-    np.random.seed(RANDOM_SEED)
-    torch.manual_seed(RANDOM_SEED)
-
     if torch.cuda.is_available():
         mp.set_start_method('spawn', force=True)
         # Benchmarks, then caches most efficient convolution algorithms
         # given the current configuration. Do not use if input sizes change frequently
         torch.backends.cudnn.benchmark = True
 
-    agent = MCTSAgent()
+    parser = argparse.ArgumentParser(description="Train MCTS agent to play Tetris.")
+
+    parser.add_argument(
+        "--checkpoint_name",
+        "-c",
+        required=True,
+        type=str,
+        help="Name of the checkpoint for loading and saving the state of training"
+    )
+
+    parser.add_argument(
+        "--seed",
+        "-s",
+        default=42,
+        type=int,
+        help="Random seed for reproducibility"
+    )
+
+    args = parser.parse_args()
+
+    checkpoint_name = args.checkpoint_name + f"_seed_{args.seed}"
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    agent = MCTSAgent(checkpoint_name=checkpoint_name)
     # agent.train_ensemble()
     asyncio.run(agent.train_async())

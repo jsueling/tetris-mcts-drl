@@ -10,6 +10,8 @@ https://www.digitalocean.com/community/tutorials/writing-resnet-from-scratch-in-
 https://youtu.be/DkNIBBBvcPs?si=ays1iv7E7LePi9We
 """
 
+import os
+
 import torch
 from torch import nn
 import numpy as np
@@ -190,6 +192,23 @@ class A0ResNet(nn.Module):
             policy_loss = -(policies_nt * predicted_log_probs_nt).sum(dim=1).mean()
 
         return policy_loss + value_loss
+
+    def save(self, file_path_prefix):
+        """Save the model state using the specified file path prefix."""
+        # temp write
+        tmp_model_file_path = file_path_prefix + '_tmp_model.pth'
+        torch.save(self.state_dict(), tmp_model_file_path)
+        # atomic overwrite
+        model_file_path = file_path_prefix + '_model.pth'
+        os.replace(tmp_model_file_path, model_file_path)
+
+    def load(self, file_path_prefix):
+        """Load the model state from the specified file path."""
+        file_path = file_path_prefix + '_model.pth'
+        try:
+            self.load_state_dict(torch.load(file_path, map_location=self.device))
+        except FileNotFoundError:
+            print(f"No model state found at {file_path}")
 
 class A0ResBlock(nn.Module):
     """

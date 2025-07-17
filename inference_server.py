@@ -2,7 +2,6 @@
 
 import multiprocessing as mp
 import asyncio
-import time
 
 import numpy as np
 import torch

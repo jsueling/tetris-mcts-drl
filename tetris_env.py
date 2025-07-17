@@ -88,7 +88,7 @@ class Tetris:
         self.height = height
         self.width = width
         self.grid = np.zeros((height, width), dtype=np.float32)
-        self.score = 0
+        self.score = np.float32(0)
         self.done = False
 
         # scheme can be type "uniform" or "bag"
@@ -177,7 +177,7 @@ class Tetris:
                 # Keep only rows that were not filled (maintains ordering)
                 self.grid[~filled_lines]
             ))
-            self.score += broken_lines
+            self.score = np.float32(self.score + broken_lines)
 
     def hard_drop(self, colour=1):
         """
@@ -288,7 +288,7 @@ class Tetris:
         Reset the game state to the initial conditions.
         """
         self.grid.fill(0)
-        self.score = 0
+        self.score = np.float32(0)
         self.done = False
         # Generate the first Tetromino of the new episode
         self.create_tetromino(

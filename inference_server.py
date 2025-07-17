@@ -2,7 +2,6 @@
 
 import multiprocessing as mp
 import asyncio
-import time
 
 import numpy as np
 import torch
@@ -122,21 +121,15 @@ class AsyncInferenceServer():
             # Collect requests from the request queue until a timeout occurs
             while True:
                 try:
-                    # request = request_queue.get() # Test with single worker
-                    # Test queue size with different timeouts
                     request = await asyncio.wait_for(request_queue.get(), timeout=1e-4)
                     # Shutdown signal None received
                     if request is None:
                         return
                     requests.append(request)
                     states.append(request['state'])
-                    # break # Test with single worker
                 except asyncio.TimeoutError:
                     if requests:
                         break
-
-            # print(len(requests), "requests received")
-            # start = time.time()
 
             policy_logits, values = await loop.run_in_executor(
                 None,
@@ -144,8 +137,6 @@ class AsyncInferenceServer():
                 model,
                 states
             )
-
-            # print("Inference time:", time.time() - start)
 
             # Send responses to the queues corresponding to the
             # worker ids of the sent requests

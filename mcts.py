@@ -429,14 +429,17 @@ class DecisionNodeAsync:
             # Continue selection until a leaf node is found, a leaf node is either
             # not evaluated or is terminal
             if not decision_node.is_evaluated or decision_node.is_terminal:
+                decision_node.visit_count += 1
                 return decision_node
 
             chance_node = decision_node.select_best_puct_child()
 
-            # Add virtual loss to all nodes along the current path
-            # to discourage exploration of nodes currently being evaluated
-            # by other workers.
+            # Add virtual loss to all nodes along the current path to discourage
+            # duplicate evaluation of nodes currently being evaluated by other workers
+            # visit_counts and virtual loss affecting PUCT exploit/explore terms respectively
+            decision_node.visit_count += 1
             chance_node.virtual_loss += 1
+            chance_node.visit_count += 1
 
             chance_children = chance_node.decision_node_children
 
@@ -559,20 +562,22 @@ class DecisionNodeAsync:
         Backpropagate the results of the evaluation for all nodes visited in the trajectory,
         traversing parent nodes until reaching the root node.
         """
-        node = self
-        while node is not None:
+        decision_node = self
+        while decision_node.parent is not None:
+
+            # Since visit count was already incremented during selection for virtual loss,
+            # it does not need to be incremented again during backpropagation.
+
+            chance_node = decision_node.parent
 
             # Update necessary statistics of nodes. Most are aggregated at the chance
             # node level since we compute the expected result over all stochastic outcomes.
 
-            node.visit_count += 1
+            # Remove virtual loss during backpropagation
+            chance_node.virtual_loss -= 1
+            chance_node.q_value_sum += q_value
 
-            if isinstance(node, ChanceNode):
-                # Remove virtual loss during backpropagation
-                node.virtual_loss -= 1
-                node.q_value_sum += q_value
-
-            node = node.parent
+            decision_node = chance_node.parent
 
     def decide_action(self, tau=1.0):
         """

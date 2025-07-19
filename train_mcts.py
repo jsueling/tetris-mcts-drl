@@ -1,14 +1,14 @@
 """Script for running the training of the MCTS agent."""
 
 import multiprocessing as mp
-import asyncio
 import argparse
 
 import random
 import numpy as np
 import torch
 
-from mcts_agent import MCTSAgent
+from mcts_agent_async import MCTSAgentAsync
+# from mcts_agent_ensemble import MCTSAgentEnsemble
 
 if __name__ == "__main__":
 
@@ -44,6 +44,6 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    agent = MCTSAgent(checkpoint_name=checkpoint_name)
-    # agent.train_ensemble()
-    asyncio.run(agent.train_async())
+    agent = MCTSAgentAsync(checkpoint_name=checkpoint_name)
+    # agent = MCTSAgentEnsemble(checkpoint_name=checkpoint_name)
+    agent.train()

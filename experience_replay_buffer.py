@@ -6,7 +6,7 @@ class ExperienceReplayBuffer:
     """An experience replay buffer that stores transitions and supports uniform random sampling."""
     def __init__(
         self,
-        max_size: int = 1000000,
+        max_size: int = 500000,
         batch_size: int = 128,
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     ):
@@ -27,6 +27,10 @@ class ExperienceReplayBuffer:
         self.tree_policies = torch.zeros((max_size, 40), dtype=torch.float32, device=device)
         self.normalised_rtg = torch.zeros((max_size,), dtype=torch.float32, device=device)
         self.legal_actions_masks = torch.zeros((max_size, 40), dtype=torch.bool, device=device)
+
+    def __len__(self):
+        """Return the current size of the buffer."""
+        return self.max_size if self.full else self.position
 
     def add_transition(self, state, tree_policy, normalised_rtg, legal_actions_mask):
         """Add a single transition to the buffer."""

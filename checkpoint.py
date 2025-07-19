@@ -22,51 +22,82 @@ class Checkpoint:
         self.model = model
         self.score_normaliser = score_normaliser
 
-        self.results = {}
+        # == All iterations ==
 
+        # Episode results
+        self.completed_iterations = 0
+        self.benchmark_scores = []
+        self.mean_score_per_episode = []
+        self.mean_steps_per_episode = []
+        self.mean_time_per_episode = []
+
+        # Losses
+        self.value_losses = []
+        self.policy_losses = []
+
+        # == Current iteration ==
+
+        # Episode results
         self.episode_scores = []
-        self.rolling_avg_scores = []
         self.steps_per_episode = []
         self.episode_times = []
-        self.prev_step_count = self.step_count = 0
-        self.starting_episode = 0
 
-        # Attempt to restore state from checkpoint files
-        self.restore_checkpoint()
+        # Losses
+        self.current_policy_losses = []
+        self.current_value_losses = []
 
-    def save_episode_results(self, start_time, final_score):
-        """Save the results of the episode to a file."""
+    def log_episode_results(self, start_time, final_score, step_count):
+        """Log results of a single episode."""
 
         end_time = time.time()
-
         self.episode_scores.append(final_score)
-        self.rolling_avg_scores.append(round(float(np.mean(self.episode_scores[-100:])), 2))
-        self.steps_per_episode.append(self.step_count - self.prev_step_count)
+        self.steps_per_episode.append(step_count)
         self.episode_times.append(round(float(end_time - start_time), 2))
-        self.prev_step_count = self.step_count
 
-        results = {
-            "episode_scores": self.episode_scores,
-            "rolling_avg_scores": self.rolling_avg_scores,
-            "steps_per_episode": self.steps_per_episode,
-            "episode_times": self.episode_times,
-            "total_steps": self.step_count,
-            "total_episodes": len(self.episode_scores),
+    def log_training_loss(self, policy_loss, value_loss):
+        """Log the loss values of the current iteration."""
+        self.current_policy_losses.append(policy_loss)
+        self.current_value_losses.append(value_loss)
+
+    def save_iteration(self, best_model, max_benchmark_score):
+        """
+        Save entire training state per iteration to allow complete restoration.
+        (computationally expensive, so it is done less frequently)
+        """
+
+        # Update to the best performing model
+        self.model = best_model
+
+        # Iteration ends
+        self.completed_iterations += 1
+        self.benchmark_scores.append(max_benchmark_score)
+        self.mean_score_per_episode.append(round(float(np.mean(self.episode_scores)), 2))
+        self.mean_steps_per_episode.append(round(float(np.mean(self.steps_per_episode)), 2))
+        self.mean_time_per_episode.append(round(float(np.mean(self.episode_times)), 2))
+
+        self.value_losses.append(self.current_value_losses[:])
+        self.policy_losses.append(self.current_policy_losses[:])
+
+        # Clear current iteration results
+        self.episode_scores.clear()
+        self.steps_per_episode.clear()
+        self.episode_times.clear()
+
+        self.current_value_losses.clear()
+        self.current_policy_losses.clear()
+
+        training_results = {
+            "completed_iterations": self.completed_iterations,
+            "benchmark_scores": self.benchmark_scores,
+            "mean_score_per_episode": self.mean_score_per_episode,
+            "mean_steps_per_episode": self.mean_steps_per_episode,
+            "mean_time_per_episode": self.mean_time_per_episode,
+            "value_losses": self.value_losses,
+            "policy_losses": self.policy_losses,
         }
 
-        # temp write
         tmp_results_file_path = self.out_file_prefix + '_tmp_results.npy'
-        np.save(tmp_results_file_path, results)
-
-        # atomic overwrite
         results_file_path = self.out_file_prefix + '_results.npy'
-        os.replace(tmp_results_file_path, results_file_path)
-
-    def hard_save(self):
-        """Save entire training state to allow complete restoration."""
-
-        tmp_results_file_path = self.out_file_prefix + '_tmp_hard_results.npy'
-        results_file_path = self.out_file_prefix + '_hard_results.npy'
         tmp_state_data_file_path = self.out_file_prefix + '_tmp_state_data.npy'
         state_data_file_path = self.out_file_prefix + '_state_data.npy'
         tmp_model_file_path = self.out_file_prefix + '_tmp_model.pth'
@@ -85,7 +116,7 @@ class Checkpoint:
             training_state_data["torch_cuda_random"] = torch.cuda.get_rng_state()
 
         # Write to temporary files
-        np.save(tmp_results_file_path, self.results)
+        np.save(tmp_results_file_path, training_results)
         np.save(tmp_state_data_file_path, training_state_data)
         self.buffer.save(tmp_buffer_file_path)
         self.model.save(tmp_model_file_path)
@@ -125,19 +156,21 @@ class Checkpoint:
         model_file_path = self.out_file_prefix + '_model.pth'
         self.model.load(model_file_path)
 
-        # Restore results state
+        # Restore training results state
         try:
-            results_state_file_path = self.out_file_prefix + '_hard_results.npy'
-            self.results = np.load(results_state_file_path, allow_pickle=True).item()
+            results_state_file_path = self.out_file_prefix + '_results.npy'
+            training_results = np.load(results_state_file_path, allow_pickle=True).item()
         except FileNotFoundError:
             print(f"No results state found at {results_state_file_path}")
+            training_results = {}
 
-        self.episode_scores = self.results.get("episode_scores", [])
-        self.rolling_avg_scores = self.results.get("rolling_avg_scores", [])
-        self.steps_per_episode = self.results.get("steps_per_episode", [])
-        self.episode_times = self.results.get("episode_times", [])
-        self.prev_step_count = self.step_count = self.results.get("total_steps", 0)
-        self.starting_episode = self.results.get("total_episodes", 0)
+        self.completed_iterations = training_results.get("completed_iterations", 0)
+        self.benchmark_scores = training_results.get("benchmark_scores", [])
+        self.mean_score_per_episode = training_results.get("mean_score_per_episode", [])
+        self.mean_steps_per_episode = training_results.get("mean_steps_per_episode", [])
+        self.mean_time_per_episode = training_results.get("mean_time_per_episode", [])
+        self.value_losses = training_results.get("value_losses", [])
+        self.policy_losses = training_results.get("policy_losses", [])
 
 def to_serialisable(val):
     """Convert numpy types to native Python types for JSON serialisation."""

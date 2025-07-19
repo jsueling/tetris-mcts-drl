@@ -10,8 +10,6 @@ https://www.digitalocean.com/community/tutorials/writing-resnet-from-scratch-in-
 https://youtu.be/DkNIBBBvcPs?si=ays1iv7E7LePi9We
 """
 
-import os
-
 import torch
 from torch import nn
 import numpy as np
@@ -122,10 +120,11 @@ class A0ResNet(nn.Module):
         self.device = device
         self.to(device)
 
-        self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-4)
+        self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-2, weight_decay=1e-4)
+
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimiser,
-            patience=3,
+            patience=2,
             factor=0.5
         )
 
@@ -155,11 +154,15 @@ class A0ResNet(nn.Module):
         tree_policies,
         ground_truth_values,
         legal_action_masks,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute the loss for the model. This consists of cross-entropy loss
         between the tree policies and the predicted action probabilities,
         and mean squared error loss between the predicted values and ground truth values.
+
+        Returns:
+        - policy_loss: Cross-entropy loss for the policy head
+        - value_loss: Mean squared error loss for the value head
         """
         # Forward pass through the model to get predicted action logits and values
         predicted_action_logits, predicted_values = self.forward(states)
@@ -196,7 +199,7 @@ class A0ResNet(nn.Module):
             # for predicting actions that differ from the tree policies
             policy_loss = -(policies_nt * predicted_log_probs_nt).sum(dim=1).mean()
 
-        return policy_loss + value_loss
+        return policy_loss, value_loss
 
     def save(self, file_path):
         """Save the model state using the specified file path."""

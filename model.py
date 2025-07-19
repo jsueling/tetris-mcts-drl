@@ -131,6 +131,11 @@ class A0ResNet(nn.Module):
 
         self.mse_loss = nn.MSELoss()
 
+        # Initialise model weights for improved stability/convergence
+        self.apply(kaiming_init)
+        # Since the last linear comes before tanh activation
+        self.value_head[-2].apply(xavier_init)
+
     def forward(self, state) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass through the ResNet model. Returns policy logits and value prediction
@@ -258,6 +263,31 @@ class A0ResBlock(nn.Module):
         out = self.relu(out)
         return out
 
+def kaiming_init(m):
+    """
+    Kaiming initialisation for the model layers which are followed by ReLU activations.
+    This is used to initialise the weights of the convolutional and linear layers
+    to improve convergence during training.
+    """
+    if isinstance(m, (nn.Linear, nn.Conv2d)):
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        if m.bias is not None:
+            m.bias.data.fill_(0)
+    elif isinstance(m, nn.BatchNorm2d):
+        m.weight.data.fill_(1)
+        if m.bias is not None:
+            m.bias.data.fill_(0)
+
+def xavier_init(m):
+    """
+    Xavier initialisation for the last linear layer of the value head
+    which comes before the Tanh activation.
+    """
+    if isinstance(m, nn.Linear):
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            m.bias.data.fill_(0)
+
 class ResNet18(A0ResNet):
     """Residual neural network for Tetris based on the ResNet-18 architecture."""
     def __init__(self, layers, num_actions, num_channels=64, device=DEVICE):
@@ -329,18 +359,6 @@ class ResNet18(A0ResNet):
             nn.Linear(256, 1),
             nn.Tanh()
         )
-
-        self.device = device
-        self.to(device)
-
-        self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-4)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimiser,
-            patience=3,
-            factor=0.5
-        )
-
-        self.mse_loss = nn.MSELoss()
 
     def _make_layer(self, block, output_channels, blocks, stride=1):
         downsample = None

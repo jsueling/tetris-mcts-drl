@@ -18,6 +18,10 @@ class InferenceServer:
             args=(self.request_queue, self.response_queues, self.model)
         )
 
+    def set_model(self, model):
+        """Set the model for the inference server to use for evaluation."""
+        self.model = model
+
     def start(self):
         """Start the inference server in a separate process."""
         self.server_process.start()
@@ -91,6 +95,10 @@ class AsyncInferenceServer():
         self.request_queue = request_queue
         self.response_queues = response_queues
         self.server_task = None
+
+    def set_model(self, model):
+        """Set the model for the inference server to use for evaluation."""
+        self.model = model
 
     def start(self):
         """Start the asynchronous inference server."""

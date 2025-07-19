@@ -10,8 +10,6 @@ https://www.digitalocean.com/community/tutorials/writing-resnet-from-scratch-in-
 https://youtu.be/DkNIBBBvcPs?si=ays1iv7E7LePi9We
 """
 
-import os
-
 import torch
 from torch import nn
 import numpy as np
@@ -122,14 +120,20 @@ class A0ResNet(nn.Module):
         self.device = device
         self.to(device)
 
-        self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-4)
+        self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-2, weight_decay=1e-4)
+
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimiser,
-            patience=3,
+            patience=2,
             factor=0.5
         )
 
         self.mse_loss = nn.MSELoss()
+
+        # Initialise model weights for improved stability/convergence
+        self.apply(kaiming_init)
+        # Since the last linear comes before tanh activation
+        self.value_head[-2].apply(xavier_init)
 
     def forward(self, state) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -150,11 +154,15 @@ class A0ResNet(nn.Module):
         tree_policies,
         ground_truth_values,
         legal_action_masks,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Compute the loss for the model. This consists of cross-entropy loss
         between the tree policies and the predicted action probabilities,
         and mean squared error loss between the predicted values and ground truth values.
+
+        Returns:
+        - policy_loss: Cross-entropy loss for the policy head
+        - value_loss: Mean squared error loss for the value head
         """
         # Forward pass through the model to get predicted action logits and values
         predicted_action_logits, predicted_values = self.forward(states)
@@ -191,20 +199,14 @@ class A0ResNet(nn.Module):
             # for predicting actions that differ from the tree policies
             policy_loss = -(policies_nt * predicted_log_probs_nt).sum(dim=1).mean()
 
-        return policy_loss + value_loss
+        return policy_loss, value_loss
 
-    def save(self, file_path_prefix):
-        """Save the model state using the specified file path prefix."""
-        # temp write
-        tmp_model_file_path = file_path_prefix + '_tmp_model.pth'
-        torch.save(self.state_dict(), tmp_model_file_path)
-        # atomic overwrite
-        model_file_path = file_path_prefix + '_model.pth'
-        os.replace(tmp_model_file_path, model_file_path)
+    def save(self, file_path):
+        """Save the model state using the specified file path."""
+        torch.save(self.state_dict(), file_path)
 
-    def load(self, file_path_prefix):
+    def load(self, file_path):
         """Load the model state from the specified file path."""
-        file_path = file_path_prefix + '_model.pth'
         try:
             self.load_state_dict(torch.load(file_path, map_location=self.device))
         except FileNotFoundError:
@@ -257,6 +259,31 @@ class A0ResBlock(nn.Module):
         out += residual
         out = self.relu(out)
         return out
+
+def kaiming_init(m):
+    """
+    Kaiming initialisation for the model layers which are followed by ReLU activations.
+    This is used to initialise the weights of the convolutional and linear layers
+    to improve convergence during training.
+    """
+    if isinstance(m, (nn.Linear, nn.Conv2d)):
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        if m.bias is not None:
+            m.bias.data.fill_(0)
+    elif isinstance(m, nn.BatchNorm2d):
+        m.weight.data.fill_(1)
+        if m.bias is not None:
+            m.bias.data.fill_(0)
+
+def xavier_init(m):
+    """
+    Xavier initialisation for the last linear layer of the value head
+    which comes before the Tanh activation.
+    """
+    if isinstance(m, nn.Linear):
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            m.bias.data.fill_(0)
 
 class ResNet18(A0ResNet):
     """Residual neural network for Tetris based on the ResNet-18 architecture."""
@@ -329,18 +356,6 @@ class ResNet18(A0ResNet):
             nn.Linear(256, 1),
             nn.Tanh()
         )
-
-        self.device = device
-        self.to(device)
-
-        self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=1e-4)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimiser,
-            patience=3,
-            factor=0.5
-        )
-
-        self.mse_loss = nn.MSELoss()
 
     def _make_layer(self, block, output_channels, blocks, stride=1):
         downsample = None

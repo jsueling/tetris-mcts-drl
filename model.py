@@ -198,18 +198,12 @@ class A0ResNet(nn.Module):
 
         return policy_loss + value_loss
 
-    def save(self, file_path_prefix):
-        """Save the model state using the specified file path prefix."""
-        # temp write
-        tmp_model_file_path = file_path_prefix + '_tmp_model.pth'
-        torch.save(self.state_dict(), tmp_model_file_path)
-        # atomic overwrite
-        model_file_path = file_path_prefix + '_model.pth'
-        os.replace(tmp_model_file_path, model_file_path)
+    def save(self, file_path):
+        """Save the model state using the specified file path."""
+        torch.save(self.state_dict(), file_path)
 
-    def load(self, file_path_prefix):
+    def load(self, file_path):
         """Load the model state from the specified file path."""
-        file_path = file_path_prefix + '_model.pth'
         try:
             self.load_state_dict(torch.load(file_path, map_location=self.device))
         except FileNotFoundError:

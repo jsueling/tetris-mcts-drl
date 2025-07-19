@@ -1,7 +1,5 @@
 """Experience replay buffer for storing and sampling transitions."""
 
-import os
-
 import torch
 
 class ExperienceReplayBuffer:
@@ -120,11 +118,8 @@ class ExperienceReplayBuffer:
             self.legal_actions_masks[indices]
         )
 
-    def save(self, file_path_prefix):
+    def save(self, file_path):
         """Save the buffer state to a file."""
-
-        # write to temporary file
-        tmp_file_path = file_path_prefix + "_tmp_buffer.pth"
 
         torch.save({
             'states': self.states,
@@ -133,18 +128,13 @@ class ExperienceReplayBuffer:
             'legal_actions_masks': self.legal_actions_masks,
             'position': self.position,
             'full': self.full
-        }, tmp_file_path)
+        }, file_path)
 
-        # atomic overwrite
-        buffer_file_path = file_path_prefix + "_buffer.pth"
-        os.replace(tmp_file_path, buffer_file_path)
-
-    def load(self, file_path_prefix):
+    def load(self, file_path):
         """Attempt to load the buffer state from a file."""
 
         try:
-            buffer_state_file_path = file_path_prefix + "_buffer.pth"
-            data = torch.load(buffer_state_file_path, map_location=self.device)
+            data = torch.load(file_path, map_location=self.device)
             self.states = data['states']
             self.tree_policies = data['tree_policies']
             self.normalised_rtg = data['normalised_rtg']
@@ -152,4 +142,4 @@ class ExperienceReplayBuffer:
             self.position = data['position']
             self.full = data['full']
         except FileNotFoundError:
-            print(f"No buffer state found at {buffer_state_file_path}")
+            print(f"No buffer state found at {file_path}")

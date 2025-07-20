@@ -124,7 +124,7 @@ class A0ResNet(nn.Module):
 
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimiser,
-            patience=2,
+            patience=3,
             factor=0.5
         )
 

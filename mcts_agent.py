@@ -118,13 +118,9 @@ class MCTSAgent:
                 self.process_transitions(transitions, final_score)
                 transitions_added += len(transitions)
 
-                # Adaptively interweaves updates with data generation
-                if (len(self.buffer) > self.min_buffer_size_for_update) and \
-                   (transitions_added >= self.batch_size):
-                    self.update()
-                    transitions_added -= self.batch_size
-
-            # Use any remaining credit on updates (1:1 ratio of data generation to updates)
+            # Maintain 1:1 ratio of data generation to updates so that the model
+            # experiences the most diverse transitions possible. Updates can be
+            # performed at any time since the data-generating model is not updated
             while (len(self.buffer) > self.min_buffer_size_for_update) and \
                   (transitions_added >= self.batch_size):
                 self.update()
@@ -173,8 +169,10 @@ class MCTSAgent:
 
     def run_episode(self, model, benchmark=False):
         """
-        This method runs a single episode of Tetris using MCTS to select actions.
-        Benchmarking mode is used to evaluate the model's performance.
+        Placeholder method overridden in subclasses, it achieves the following:
+        Runs a single episode of Tetris using MCTS to select actions.
+        Benchmarking mode is used to evaluate the model's performance
+        (sets exploratory temperature parameter to 0.0).
         Returns:
         - final_score: The final score of the episode.
         - transitions: List of transitions collected during the episode
@@ -207,6 +205,6 @@ class MCTSAgent:
             self.model.load_state_dict(self.candidate_model.state_dict())
 
         # In either case, the candidate model is reinstantiated, resetting the
-        # optimiser/scheduler but copying the weights
+        # optimiser/scheduler but copying the weights from the best model.
         self.candidate_model = A0ResNet(num_residual_blocks=19, num_actions=ACTION_SPACE)
         self.candidate_model.load_state_dict(self.model.state_dict())

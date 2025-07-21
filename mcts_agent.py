@@ -92,8 +92,8 @@ class MCTSAgent:
         # Avoid duplicate benchmarking if there exists a previous benchmark score.
         if len(self.checkpoint.benchmark_scores) == 0:
             for _ in tqdm(range(self.benchmark_episode_count), desc="Benchmarking initial model"):
-                final_score, _, _ = self.run_episode(self.model, benchmark=True)
-                self.max_benchmark_score += final_score
+                episode_score, _, _ = self.run_episode(model=self.model, benchmark=True)
+                self.max_benchmark_score += episode_score
         else:
             self.max_benchmark_score = self.checkpoint.benchmark_scores[-1]
 
@@ -112,16 +112,17 @@ class MCTSAgent:
                 start_time = time.time()
 
                 # Best model generates experience
-                final_score, transitions, step_count = self.run_episode(self.model, benchmark=False)
+                episode_score, transitions, step_count = \
+                    self.run_episode(model=self.model, benchmark=False)
 
                 # End episode
                 self.checkpoint.log_episode_results(
                     start_time,
-                    final_score,
+                    episode_score,
                     step_count
                 )
 
-                self.process_transitions(transitions, final_score)
+                self.process_transitions(transitions, episode_score)
 
             # The first iteration is reserved for data generation
             if iter_idx > 0:
@@ -133,7 +134,10 @@ class MCTSAgent:
                 # Candidate benchmarked and model possibly replaced
                 self.benchmark_candidate()
 
-            self.checkpoint.save_iteration(self.model, self.max_benchmark_score)
+            self.checkpoint.save_iteration(
+                best_model=self.model,
+                max_benchmark_score=self.max_benchmark_score
+            )
 
     def process_transitions(self, transitions, final_score):
         """Process transitions after an episode ends."""
@@ -196,8 +200,8 @@ class MCTSAgent:
 
         candidate_score = 0
         for _ in range(self.benchmark_episode_count):
-            score, _, _ = self.run_episode(model=self.candidate_model, benchmark=True)
-            candidate_score += score
+            episode_score, _, _ = self.run_episode(model=self.candidate_model, benchmark=True)
+            candidate_score += episode_score
 
         # If candidate model outperforms the best model so far, it is adopted for data generation
         if candidate_score > self.max_benchmark_score:

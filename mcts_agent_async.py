@@ -47,7 +47,7 @@ class MCTSAgentAsync(MCTSAgent):
         # Avoid duplicate benchmarking if there exists a previous benchmark score.
         if len(self.checkpoint.benchmark_scores) == 0:
             for _ in tqdm(range(self.benchmark_episode_count), desc="Benchmarking initial model"):
-                episode_score, _, _ = await self.run_episode_async(self.model, benchmark=True)
+                episode_score, _, _ = await self.run_episode_async(model=self.model, benchmark=True)
                 self.max_benchmark_score += episode_score
         else:
             self.max_benchmark_score = self.checkpoint.benchmark_scores[-1]
@@ -68,7 +68,7 @@ class MCTSAgentAsync(MCTSAgent):
 
                 # Best model generates experience
                 episode_score, transitions, step_count = \
-                    await self.run_episode_async(self.model, benchmark=False)
+                    await self.run_episode_async(model=self.model, benchmark=False)
 
                 # End episode
                 self.checkpoint.log_episode_results(
@@ -87,9 +87,12 @@ class MCTSAgentAsync(MCTSAgent):
                     self.update()
 
                 # Candidate benchmarked and model possibly replaced
-                self.benchmark_candidate()
+                await self.benchmark_candidate_async()
 
-            self.checkpoint.save_iteration(self.model, self.max_benchmark_score)
+            self.checkpoint.save_iteration(
+                best_model=self.model,
+                max_benchmark_score=self.max_benchmark_score
+            )
 
     async def run_episode_async(self, model, benchmark=False):
         """
@@ -170,7 +173,7 @@ class MCTSAgentAsync(MCTSAgent):
 
         return final_score, transitions, step_count
 
-    async def evaluate_models_async(self):
+    async def benchmark_candidate_async(self):
         """
         Evaluate the current model against the candidate model. The current model
         generates data until a new model outperforms it via benchmarking.

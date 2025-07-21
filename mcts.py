@@ -19,7 +19,8 @@ C_PUCT = 1.0  # Hyperparameter modulating prior-guided exploration bonus in pUCT
 
 # Dirichlet noise parameters for exploration, applied to actions at the root node only
 DIRICHLET_EPSILON = 0.25
-# Alpha is chosen proportional to the average number of legal moves, 0.03 was used in AlphaZero for Chess
+# Dirichlet alpha is chosen proportional to the average number of legal moves,
+# 0.03 was used in AlphaZero for Chess
 DIRICHLET_ALPHA = 0.03
 
 class MCTreeNodeDeterminised:
@@ -248,53 +249,6 @@ class MCTreeNodeDeterminised:
             node.visit_count += 1
             node.q_value_sum += q_value
             node = node.parent
-
-    def decide_action(self, tau=1.0):
-        """
-        Decide on the best action to take based on the visit counts of immediate child nodes.
-        Arguments:
-        - tau: Temperature parameter for softmax action selection.
-        This parameter modulates exploration vs exploitation in the action selection
-        of the actual game.
-        Returns:
-        - action: The selected action based on the visit counts. \
-            Returns -1 if no actions are available.
-        - tree_policy: The policy vector for the tree in this state, representing the
-        probabilities of selecting each action derived from visit counts of the tree search.
-        """
-
-        # Create a tree policy vector representing the probabilities of selecting each action
-        # informed by the visit counts of the tree search
-        tree_policy = np.zeros(ACTION_SPACE, dtype=np.float32)
-
-        if len(self.children) == 0:
-            # If there are no possible actions (no children from the root node),
-            # return -1 indicating no action can be taken and a default tree policy
-            return -1, tree_policy
-
-        actions = list(self.children.keys())
-
-        visit_counts = np.array(
-            [child.visit_count for child in self.children.values()],
-            dtype=np.float32
-        )
-
-        if tau == 0.0:
-            # If tau is at minimum, select action greedily by the maximum visit count
-            highest_visit_actions = actions[visit_counts == np.max(visit_counts)]
-            chosen_action = np.random.choice(highest_visit_actions)
-            tree_policy[chosen_action] = 1.0
-            return chosen_action, tree_policy
-
-        # Normalise visit counts using softmax with temperature tau
-        visit_counts = visit_counts ** (1 / tau)
-        visit_probs = visit_counts / np.sum(visit_counts)
-        # Select an action based on the probabilities derived from visit counts
-        chosen_action = np.random.choice(actions, p=visit_probs)
-
-        tree_policy[actions] = visit_probs
-
-        return chosen_action, tree_policy
 
 class ChanceNode:
     """
@@ -615,6 +569,8 @@ class MCDecisionNodeAsync:
             return -1, tree_policy
 
         actions, chance_nodes = zip(*self.chance_node_children.items())
+
+        actions = np.array(actions)
 
         # The sum of visit counts to all child nodes of each chance node
         visit_counts = np.array([

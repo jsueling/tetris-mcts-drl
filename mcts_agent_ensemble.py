@@ -206,6 +206,6 @@ def ensemble_mcts_helper(
         root_node.run_iteration()
 
     result_queue.put({
-        "actions": list(root_node.children.keys()),
+        "actions": np.array(list(root_node.children.keys())),
         "visit_counts": [child.visit_count for child in root_node.children.values()]
     })

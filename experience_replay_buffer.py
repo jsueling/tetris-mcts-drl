@@ -106,12 +106,10 @@ class ExperienceReplayBuffer:
         - legal actions masks (shape: [batch_size, 40])
         """
 
-        current_size = self.max_size if self.full else self.position
-
         indices = torch.randint(
             0,
-            current_size,
-            (min(self.batch_size, current_size),),
+            len(self),
+            (min(self.batch_size, len(self)),),
             device=self.device
         )
 

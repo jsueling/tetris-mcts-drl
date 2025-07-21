@@ -18,8 +18,9 @@ ACTION_SPACE = 40 # Rotations * Columns
 C_PUCT = 1.0  # Hyperparameter modulating prior-guided exploration bonus in pUCT
 
 # Dirichlet noise parameters for exploration, applied to actions at the root node only
-DIRICHLET_ALPHA = 0.03
 DIRICHLET_EPSILON = 0.25
+# Alpha is chosen proportional to the average number of legal moves, 0.03 was used in AlphaZero for Chess
+DIRICHLET_ALPHA = 0.03
 
 class MCTreeNodeDeterminised:
     """
@@ -89,11 +90,19 @@ class MCTreeNodeDeterminised:
         Returns this node's child with the maximum pUCT value
         (Predictor + Upper Confidence Bound for Trees)
         """
+
+        # ∑_b N(s, b)
         parent_visit_count = self.visit_count
+
         children = list(self.children.values())
 
+        # N(s, a) for each child node
         visit_counts = np.array([child.visit_count for child in children], dtype=np.float32)
+
+        # W(s, a) for each child node
         q_value_sums = np.array([child.q_value_sum for child in children], dtype=np.float32)
+
+        # P(s, a) for each child node
         prior_probabilities = np.array(
             [child.prior_probability for child in children],
             dtype=np.float32
@@ -106,6 +115,7 @@ class MCTreeNodeDeterminised:
         # converge to a more accurate estimate of the true value. If child
         # node has not been visited, its q_value is 0 (i.e. not evaluated yet).
         q_value_estimates = np.zeros_like(q_value_sums, dtype=np.float32)
+
         np.divide(q_value_sums, visit_counts, out=q_value_estimates, where=visit_counts > 0)
 
         # Balance exploration and exploitation using the modified pUCT formula to recursively
@@ -264,19 +274,17 @@ class MCTreeNodeDeterminised:
 
         actions = list(self.children.keys())
 
-        if tau == 0.0:
-            # If tau is at minimum, select action greedily by the maximum visit count
-            chosen_action = max(
-                actions,
-                key=lambda action: self.children[action].visit_count
-            )
-            tree_policy[chosen_action] = 1.0
-            return chosen_action, tree_policy
-
         visit_counts = np.array(
             [child.visit_count for child in self.children.values()],
             dtype=np.float32
         )
+
+        if tau == 0.0:
+            # If tau is at minimum, select action greedily by the maximum visit count
+            highest_visit_actions = actions[visit_counts == np.max(visit_counts)]
+            chosen_action = np.random.choice(highest_visit_actions)
+            tree_policy[chosen_action] = 1.0
+            return chosen_action, tree_policy
 
         # Normalise visit counts using softmax with temperature tau
         visit_counts = visit_counts ** (1 / tau)
@@ -405,6 +413,7 @@ class MCDecisionNodeAsync:
         # Expected Q-value estimates are a noisy estimate of the value of an action
         # averaged over every stochastic outcome
         expected_q_value_estimates = np.zeros_like(q_value_sums, dtype=np.float32)
+
         np.divide(
             q_value_sums,
             visit_counts,
@@ -422,38 +431,45 @@ class MCDecisionNodeAsync:
         """
         Balance exploration and exploitation using the NN-augmented pUCT formula to recursively
         sample a child node from the highest pUCT-valued action until reaching a leaf node
+        Returns:
+        - decision_node: The leaf decision node reached by the selection process which is the first
+        node that is either not evaluated or is a terminal node.
         """
+
         decision_node = self
+
         while True:
 
-            # Continue selection until a leaf node is found, a leaf node is either
-            # not evaluated or is terminal
+            # Base case, first non-evaluated or terminal  decision node
             if not decision_node.is_evaluated or decision_node.is_terminal:
                 decision_node.visit_count += 1
                 return decision_node
 
+            # Decide on action, transitioning to chance node, based on the best pUCT value
             chance_node = decision_node.select_best_puct_child()
 
             # Add virtual loss to all nodes along the current path to discourage
             # duplicate evaluation of nodes currently being evaluated by other workers
             # visit_counts and virtual loss affecting PUCT exploit/explore terms respectively
+
             decision_node.visit_count += 1
             chance_node.virtual_loss += 1
             chance_node.visit_count += 1
 
-            chance_children = chance_node.decision_node_children
-
-            least_visited_child = min(chance_children, key=lambda child: child.visit_count)
-
-            least_visited_indices = [
-                index for index, decision_node in enumerate(chance_children) if
-                decision_node.visit_count == least_visited_child.visit_count
-            ]
-
-            # Transition to a decision node based on the best pUCT action. Here we choose
+            # Stochastic outcome, transitioning to a decision node. Here we choose
             # a child with minimum visit count selected randomly to converge to expected
             # values faster since the distribution of tetrominoes is randomly uniform.
-            decision_node = chance_children[np.random.choice(least_visited_indices)]
+
+            chance_children = chance_node.decision_node_children
+
+            min_visit_count = min(decision_node.visit_count for decision_node in chance_children)
+
+            least_visited_tetromino_types = [
+                tetromino_type for tetromino_type, decision_node in enumerate(chance_children) if
+                decision_node.visit_count == min_visit_count
+            ]
+
+            decision_node = chance_children[np.random.choice(least_visited_tetromino_types)]
 
     async def nn_evaluation(self, worker_id: int):
         """
@@ -606,7 +622,8 @@ class MCDecisionNodeAsync:
         ], dtype=np.float32)
 
         if tau == 0.0:
-            chosen_action = actions[np.argmax(visit_counts)]
+            highest_visit_actions = actions[visit_counts == np.max(visit_counts)]
+            chosen_action = np.random.choice(highest_visit_actions)
             tree_policy[chosen_action] = 1.0
             return chosen_action, tree_policy
 

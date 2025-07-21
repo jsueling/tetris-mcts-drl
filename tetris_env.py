@@ -81,10 +81,10 @@ class Tetris:
         self,
         height: int=20,
         width: int=10,
-        tetromino_randomisation_scheme: str="uniform"
+        piece_gen_scheme: str="uniform"
     ):
 
-        self.current_tetromino = None
+        self.tetromino = None
         self.height = height
         self.width = width
         self.grid = np.zeros((height, width), dtype=np.float32)
@@ -92,9 +92,9 @@ class Tetris:
         self.done = False
 
         # scheme can be type "uniform" or "bag"
-        self.tetromino_randomisation_scheme = tetromino_randomisation_scheme
+        self.piece_gen_scheme = piece_gen_scheme
 
-        if self.tetromino_randomisation_scheme == "bag":
+        if self.piece_gen_scheme == "bag":
             # Initialise a bag of random Tetrominoes
             self.bag = list(range(len(Tetromino.figures)))
             random.shuffle(self.bag)
@@ -109,15 +109,15 @@ class Tetris:
 
     def create_tetromino(self, tetromino_type: int) -> None:
         """Creates a new unspawned Tetromino of tetromino_type attached to this game state."""
-        self.current_tetromino = Tetromino(tetromino_type)
+        self.tetromino = Tetromino(tetromino_type)
 
     def get_current_tetromino_type(self) -> Optional[int]:
         """
         Returns the type of the current Tetromino (0-6).
         If no Tetromino is currently active, returns None.
         """
-        if self.current_tetromino:
-            return self.current_tetromino.type
+        if self.tetromino:
+            return self.tetromino.type
         return None
 
     def generate_next_tetromino_type(self, is_first_tetromino=False) -> int:
@@ -128,11 +128,11 @@ class Tetris:
         Tetromino in a random order, refilling and reshuffling it when empty.
         """
 
-        if self.tetromino_randomisation_scheme == "uniform":
+        if self.piece_gen_scheme == "uniform":
             # Randomly select a Tetromino type uniformly
             return random.randint(0, 6)
 
-        if self.tetromino_randomisation_scheme == "bag":
+        if self.piece_gen_scheme == "bag":
 
             # If this is the first Tetromino of the episode
             # or the bag is empty, refill and shuffle it
@@ -142,7 +142,7 @@ class Tetris:
             return self.bag.pop()
 
         raise ValueError(
-            f"Invalid tetromino randomisation scheme: {self.tetromino_randomisation_scheme}"
+            f"Invalid tetromino randomisation scheme: {self.piece_gen_scheme}"
         )
 
     def intersects(self):
@@ -150,8 +150,8 @@ class Tetris:
         Returns True if the current Tetromino placement is invalid or False otherwise
         (OOB and collision checks).
         """
-        x, y = self.current_tetromino.x, self.current_tetromino.y
-        for cell_index in self.current_tetromino.image():
+        x, y = self.tetromino.x, self.tetromino.y
+        for cell_index in self.tetromino.image():
             tetromino_row = y + (cell_index // 4)
             tetromino_col = x + (cell_index % 4)
             if ( # OOB checks and collision check
@@ -185,15 +185,15 @@ class Tetris:
         After the hard drop, the Tetromino is removed from the game state.
         """
         while not self.intersects():
-            self.current_tetromino.y += 1
-        self.current_tetromino.y -= 1
+            self.tetromino.y += 1
+        self.tetromino.y -= 1
         self.freeze(colour)
-        self.current_tetromino = None
+        self.tetromino = None
 
     def freeze(self, colour):
         """Freeze the current Tetromino, it now becomes part of the grid."""
-        x, y = self.current_tetromino.x, self.current_tetromino.y
-        for cell_index in self.current_tetromino.image():
+        x, y = self.tetromino.x, self.tetromino.y
+        for cell_index in self.tetromino.image():
             tetromino_row = y + (cell_index // 4)
             tetromino_col = x + (cell_index % 4)
             self.grid[tetromino_row][tetromino_col] = colour
@@ -205,7 +205,7 @@ class Tetris:
         for the Tetromino hard drop placement. This assumes that
         all shifts and rotations are possible during lock delay.
         """
-        current_column = self.current_tetromino.x
+        current_column = self.tetromino.x
         if target_column < current_column:
             for col in range(current_column, target_column - 1, -1):
                 if self.grid[0][col] > 0 or self.grid[1][col] > 0:
@@ -248,13 +248,13 @@ class Tetris:
         for rotation in range(unique_rotations):
             for col in range(max_columns):
                 # Try to spawn the Tetromino in the specified column and rotation
-                self.current_tetromino.spawn(x=col, rotation=rotation)
+                self.tetromino.spawn(x=col, rotation=rotation)
                 if not self.intersects():
                     legal_actions[rotation * max_columns + col] = True
 
         # Despawn the Tetromino after checking all legal actions
         # to ensure the state is clean for the next action
-        self.current_tetromino.despawn()
+        self.tetromino.despawn()
 
         return legal_actions
 
@@ -273,7 +273,7 @@ class Tetris:
             return True
 
         rotation, col = divmod(action, self.width)
-        self.current_tetromino.spawn(x=col, rotation=rotation)
+        self.tetromino.spawn(x=col, rotation=rotation)
 
         if self.intersects():
             return True
@@ -297,13 +297,13 @@ class Tetris:
 
     def copy(self):
         """Create a deep copy of the current game state."""
-        new_env = Tetris()
+        new_env = Tetris(piece_gen_scheme=self.piece_gen_scheme)
         np.copyto(new_env.grid, self.grid)
         new_env.score = self.score
         new_env.done = self.done
-        if self.current_tetromino:
+        if self.tetromino:
             new_env.create_tetromino(self.get_current_tetromino_type())
-        if self.tetromino_randomisation_scheme == "bag":
+        if self.piece_gen_scheme == "bag":
             new_env.bag = self.bag.copy()
         return new_env
 

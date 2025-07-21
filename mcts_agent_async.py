@@ -47,8 +47,8 @@ class MCTSAgentAsync(MCTSAgent):
         # Avoid duplicate benchmarking if there exists a previous benchmark score.
         if len(self.checkpoint.benchmark_scores) == 0:
             for _ in tqdm(range(self.benchmark_episode_count), desc="Benchmarking initial model"):
-                final_score, _, _ = await self.run_episode_async(self.model, benchmark=True)
-                self.max_benchmark_score += final_score
+                episode_score, _, _ = await self.run_episode_async(self.model, benchmark=True)
+                self.max_benchmark_score += episode_score
         else:
             self.max_benchmark_score = self.checkpoint.benchmark_scores[-1]
 
@@ -61,40 +61,33 @@ class MCTSAgentAsync(MCTSAgent):
             unit="iteration"
         ):
 
-            transitions_added = 0
-
             for _ in range(self.episodes_per_iteration):
 
                 # Begin episode
                 start_time = time.time()
 
-                final_score, transitions, step_count = \
+                # Best model generates experience
+                episode_score, transitions, step_count = \
                     await self.run_episode_async(self.model, benchmark=False)
 
                 # End episode
                 self.checkpoint.log_episode_results(
                     start_time,
-                    final_score,
+                    episode_score,
                     step_count
                 )
 
-                self.process_transitions(transitions, final_score)
-                transitions_added += len(transitions)
-
-            # Maintain 1:1 ratio of data generation to updates so that the model
-            # experiences the most diverse transitions possible. Updates can be
-            # performed at any time since the data-generating model is not updated.
-            while (len(self.buffer) > self.min_buffer_size_for_update) and \
-                  (transitions_added >= self.batch_size):
-                self.update()
-                transitions_added -= self.batch_size
+                self.process_transitions(transitions, episode_score)
 
             # The first iteration is reserved for data generation
             if iter_idx > 0:
-                # Evaluates the current model against the candidate model
-                # and updates model and benchmark score if the candidate model
-                # outperforms the current model.
-                await self.evaluate_models_async()
+
+                # Candidate model trains on best model's generated experience
+                for _ in range(self.updates_per_iteration):
+                    self.update()
+
+                # Candidate benchmarked and model possibly replaced
+                self.benchmark_candidate()
 
             self.checkpoint.save_iteration(self.model, self.max_benchmark_score)
 
@@ -105,6 +98,10 @@ class MCTSAgentAsync(MCTSAgent):
         Arguments:
             model: The model to use for inference during the episode.
             benchmark: If True, runs the episode in benchmark mode without collecting transitions.
+        Returns:
+        - final_score: The final score of the episode.
+        - transitions: List of transitions collected during the episode (if not in benchmark mode).
+        - step_count: The number of steps taken in the episode (if not in benchmark mode).
         """
 
         self.env.reset()
@@ -150,7 +147,7 @@ class MCTSAgentAsync(MCTSAgent):
                     score_before_action
                 ])
 
-            # Update the environment with the selected action and next Tetromino
+            # Update the environment with the selected action
             done = self.env.step(chosen_action)
 
             step_count += 1
@@ -185,20 +182,25 @@ class MCTSAgentAsync(MCTSAgent):
         # Note: Tetris is a single-player game, so only the candidate model needs to be benchmarked
         # against the previously computed max_benchmark_score.
 
-        benchmark_candidate_score = 0
+        candidate_score = 0
         for _ in range(self.benchmark_episode_count):
             episode_score, _, _ = \
                 await self.run_episode_async(model=self.candidate_model, benchmark=True)
-            benchmark_candidate_score += episode_score
+            candidate_score += episode_score
 
         # If candidate model outperforms the best model so far, it is adopted for data generation
-        if benchmark_candidate_score > self.max_benchmark_score:
-            self.max_benchmark_score = benchmark_candidate_score
+        if candidate_score > self.max_benchmark_score:
+            self.max_benchmark_score = candidate_score
             self.model.load_state_dict(self.candidate_model.state_dict())
 
-        # In either case, the candidate model is reinstantiated, resetting the
-        # optimiser/scheduler but copying the weights from the best model.
-        self.candidate_model = A0ResNet(num_residual_blocks=19, num_actions=ACTION_SPACE)
+        # In either case, the candidate model is reinstantiated, resetting the optimiser/scheduler
+        self.candidate_model = A0ResNet(
+            num_residual_blocks=19,
+            num_actions=ACTION_SPACE,
+            updates_per_iteration=self.updates_per_iteration,
+        )
+
+        # Reset candidate model to the current best model's state
         self.candidate_model.load_state_dict(self.model.state_dict())
 
 async def run_async_mcts(

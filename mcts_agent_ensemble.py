@@ -164,7 +164,8 @@ def run_ensemble_mcts(
         chosen_action = -1
     elif (benchmark is True) or (step_count >= explore_threshold):
         # Greedy when benchmarking or after exploratory steps
-        chosen_action = available_actions[np.argmax(mean_visit_counts)]
+        highest_visit_actions = available_actions[mean_visit_counts == np.max(mean_visit_counts)]
+        chosen_action = np.random.choice(highest_visit_actions)
         tree_policy[chosen_action] = 1.0
     else:
         # Allow exploratory steps at episode start

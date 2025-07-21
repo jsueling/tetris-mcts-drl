@@ -56,8 +56,8 @@ class Checkpoint:
 
     def log_training_loss(self, policy_loss, value_loss):
         """Log the loss values of the current iteration."""
-        self.current_policy_losses.append(policy_loss)
-        self.current_value_losses.append(value_loss)
+        self.current_policy_losses.append(round(float(policy_loss), 3))
+        self.current_value_losses.append(round(float(value_loss), 3))
 
     def save_iteration(self, best_model, max_benchmark_score):
         """

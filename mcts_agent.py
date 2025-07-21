@@ -11,7 +11,7 @@ from model import A0ResNet
 from score_normaliser import ScoreNormaliser
 from checkpoint import Checkpoint
 
-MCTS_ITERATIONS = 1600 # Number of MCTS iterations per action selection
+MCTS_ITERATIONS = 800 # Number of MCTS iterations per action selection
 ACTION_SPACE = 40 # Upper bound on possible actions for hard drop (rotations * columns placements)
 BATCH_SIZE = 256 # Batch size for experience replay
 
@@ -24,11 +24,19 @@ class MCTSAgent:
         total_iterations=100,
         episodes_per_iteration=200,
         num_benchmark_episodes=50,
-        min_buffer_size_for_update=1e3,
+        updates_per_iteration=20,
         n_workers=10
     ):
-        self.model = A0ResNet(num_residual_blocks=19, num_actions=ACTION_SPACE)
-        self.candidate_model = A0ResNet(num_residual_blocks=19, num_actions=ACTION_SPACE)
+        self.model = A0ResNet(
+            num_residual_blocks=19,
+            updates_per_iteration=updates_per_iteration,
+            num_actions=ACTION_SPACE
+        )
+        self.candidate_model = A0ResNet(
+            num_residual_blocks=19,
+            updates_per_iteration=updates_per_iteration,
+            num_actions=ACTION_SPACE
+        )
         self.buffer = ExperienceReplayBuffer(
             batch_size=batch_size,
             max_size=500000,
@@ -49,7 +57,7 @@ class MCTSAgent:
         self.total_iterations = total_iterations
         self.episodes_per_iteration = episodes_per_iteration
         self.benchmark_episode_count = num_benchmark_episodes
-        self.min_buffer_size_for_update = min_buffer_size_for_update
+        self.updates_per_iteration = updates_per_iteration
         self.max_benchmark_score = 0
 
     def update(self):
@@ -68,7 +76,6 @@ class MCTSAgent:
         total_loss = policy_loss + value_loss
         total_loss.backward()
         self.candidate_model.optimiser.step()
-        # Update LR of optimiser via scheduler step
         self.candidate_model.scheduler.step(total_loss)
 
         self.checkpoint.log_training_loss(
@@ -85,8 +92,8 @@ class MCTSAgent:
         # Avoid duplicate benchmarking if there exists a previous benchmark score.
         if len(self.checkpoint.benchmark_scores) == 0:
             for _ in tqdm(range(self.benchmark_episode_count), desc="Benchmarking initial model"):
-                final_score, _, _ = self.run_episode(self.model, benchmark=True)
-                self.max_benchmark_score += final_score
+                episode_score, _, _ = self.run_episode(model=self.model, benchmark=True)
+                self.max_benchmark_score += episode_score
         else:
             self.max_benchmark_score = self.checkpoint.benchmark_scores[-1]
 
@@ -99,45 +106,38 @@ class MCTSAgent:
             unit="iteration"
         ):
 
-            transitions_added = 0
-
             for _ in range(self.episodes_per_iteration):
 
                 # Begin episode
                 start_time = time.time()
 
-                final_score, transitions, step_count = self.run_episode(self.model, benchmark=False)
+                # Best model generates experience
+                episode_score, transitions, step_count = \
+                    self.run_episode(model=self.model, benchmark=False)
 
                 # End episode
                 self.checkpoint.log_episode_results(
                     start_time,
-                    final_score,
+                    episode_score,
                     step_count
                 )
 
-                self.process_transitions(transitions, final_score)
-                transitions_added += len(transitions)
-
-                # Adaptively interweaves updates with data generation
-                if (len(self.buffer) > self.min_buffer_size_for_update) and \
-                   (transitions_added >= self.batch_size):
-                    self.update()
-                    transitions_added -= self.batch_size
-
-            # Use any remaining credit on updates (1:1 ratio of data generation to updates)
-            while (len(self.buffer) > self.min_buffer_size_for_update) and \
-                  (transitions_added >= self.batch_size):
-                self.update()
-                transitions_added -= self.batch_size
+                self.process_transitions(transitions, episode_score)
 
             # The first iteration is reserved for data generation
             if iter_idx > 0:
-                # Evaluates the current model against the candidate model
-                # and updates model and benchmark score if the candidate model
-                # outperforms the current model.
-                self.evaluate_models()
 
-            self.checkpoint.save_iteration(self.model, self.max_benchmark_score)
+                # Candidate model trains on best model's generated experience
+                for _ in range(self.updates_per_iteration):
+                    self.update()
+
+                # Candidate benchmarked and model possibly replaced
+                self.benchmark_candidate()
+
+            self.checkpoint.save_iteration(
+                best_model=self.model,
+                max_benchmark_score=self.max_benchmark_score
+            )
 
     def process_transitions(self, transitions, final_score):
         """Process transitions after an episode ends."""
@@ -173,8 +173,10 @@ class MCTSAgent:
 
     def run_episode(self, model, benchmark=False):
         """
-        This method runs a single episode of Tetris using MCTS to select actions.
-        Benchmarking mode is used to evaluate the model's performance.
+        Placeholder method overridden in subclasses, it achieves the following:
+        Runs a single episode of Tetris using MCTS to select actions.
+        Benchmarking mode is used to evaluate the model's performance
+        (sets exploratory temperature parameter to 0.0).
         Returns:
         - final_score: The final score of the episode.
         - transitions: List of transitions collected during the episode
@@ -184,11 +186,11 @@ class MCTSAgent:
         """
         return None, None, None
 
-    def evaluate_models(self):
+    def benchmark_candidate(self):
         """
-        Evaluate the current model against the candidate model. The current model
+        Evaluate the candidate model against the current best model. The current model
         generates data until a new model outperforms it via benchmarking.
-        This happens so that performance is monotonically increasing. This method
+        This is so that performance is monotonically increasing. This method
         updates the current model to be the best performing model and resets
         the candidate model for the next iteration.
         """
@@ -196,17 +198,22 @@ class MCTSAgent:
         # Note: Tetris is a single-player game, so only the candidate model needs to be benchmarked
         # against the previously computed max_benchmark_score.
 
-        benchmark_candidate_score = 0
+        candidate_score = 0
         for _ in range(self.benchmark_episode_count):
-            score, _, _ = self.run_episode(model=self.candidate_model, benchmark=True)
-            benchmark_candidate_score += score
+            episode_score, _, _ = self.run_episode(model=self.candidate_model, benchmark=True)
+            candidate_score += episode_score
 
         # If candidate model outperforms the best model so far, it is adopted for data generation
-        if benchmark_candidate_score > self.max_benchmark_score:
-            self.max_benchmark_score = benchmark_candidate_score
+        if candidate_score > self.max_benchmark_score:
+            self.max_benchmark_score = candidate_score
             self.model.load_state_dict(self.candidate_model.state_dict())
 
-        # In either case, the candidate model is reinstantiated, resetting the
-        # optimiser/scheduler but copying the weights
-        self.candidate_model = A0ResNet(num_residual_blocks=19, num_actions=ACTION_SPACE)
+        # In either case, the candidate model is reinstantiated, resetting the optimiser/scheduler
+        self.candidate_model = A0ResNet(
+            num_residual_blocks=19,
+            num_actions=ACTION_SPACE,
+            updates_per_iteration=self.updates_per_iteration,
+        )
+
+        # Reset candidate model to the current best model's state
         self.candidate_model.load_state_dict(self.model.state_dict())

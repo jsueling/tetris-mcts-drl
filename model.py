@@ -49,6 +49,7 @@ class A0ResNet(nn.Module):
         num_residual_blocks=19,
         num_actions=40,
         num_channels=256,
+        updates_per_iteration=20,
         device=DEVICE
     ):
         super(A0ResNet, self).__init__()
@@ -73,8 +74,9 @@ class A0ResNet(nn.Module):
             ],
         )
 
-        policy_head_out_channels = 2
-        value_head_out_channels = 1
+        # Leela Chess Zero suggest 32 instead of 2 and 1 respectively
+        policy_head_out_channels = 32
+        value_head_out_channels = 32
 
         with torch.no_grad():
             # Calculate the output size after the last residual block using a dummy input
@@ -120,32 +122,28 @@ class A0ResNet(nn.Module):
         self.device = device
         self.to(device)
 
-        self.optimiser = torch.optim.Adam(self.parameters(), lr=1e-2, weight_decay=1e-4)
+        self.optimiser = torch.optim.AdamW(self.parameters(), lr=1e-4, weight_decay=1e-4)
 
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.optimiser,
-            patience=2,
-            factor=0.5
+            max_lr=1e-3,
+            total_steps=updates_per_iteration,
+            div_factor=10,
+            anneal_strategy='cos',
+            pct_start=0.3
         )
 
         self.mse_loss = nn.MSELoss()
-
-        # Initialise model weights for improved stability/convergence
-        self.apply(kaiming_init)
-        # Since the last linear comes before tanh activation
-        self.value_head[-2].apply(xavier_init)
 
     def forward(self, state) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass through the ResNet model. Returns policy logits and value prediction
         for a given state (grid + tetromino).
         """
-
         x = self.conv1(state)
         x = self.residual_blocks(x)
         policy_prediction = self.policy_head(x)
         value_prediction = self.value_head(x)
-
         return policy_prediction, value_prediction
 
     def loss(
@@ -259,31 +257,6 @@ class A0ResBlock(nn.Module):
         out += residual
         out = self.relu(out)
         return out
-
-def kaiming_init(m):
-    """
-    Kaiming initialisation for the model layers which are followed by ReLU activations.
-    This is used to initialise the weights of the convolutional and linear layers
-    to improve convergence during training.
-    """
-    if isinstance(m, (nn.Linear, nn.Conv2d)):
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-        if m.bias is not None:
-            m.bias.data.fill_(0)
-    elif isinstance(m, nn.BatchNorm2d):
-        m.weight.data.fill_(1)
-        if m.bias is not None:
-            m.bias.data.fill_(0)
-
-def xavier_init(m):
-    """
-    Xavier initialisation for the last linear layer of the value head
-    which comes before the Tanh activation.
-    """
-    if isinstance(m, nn.Linear):
-        nn.init.xavier_uniform_(m.weight)
-        if m.bias is not None:
-            m.bias.data.fill_(0)
 
 class ResNet18(A0ResNet):
     """Residual neural network for Tetris based on the ResNet-18 architecture."""

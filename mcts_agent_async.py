@@ -102,11 +102,13 @@ class MCTSAgentAsync(MCTSAgent):
         """
         Runs a single episode of an MCTS agent that uses multiple workers
         to expand a shared tree using async/await to mimic threading.
+        Arguments:
+            model: The model to use for inference during the episode.
+            benchmark: If True, runs the episode in benchmark mode without collecting transitions.
         """
 
         self.env.reset()
 
-        # Set the current model for the inference server
         self.inference_server.set_model(model)
 
         # Create the root node of the MCTS tree for this episode which will be iteratively

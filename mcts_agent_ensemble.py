@@ -44,7 +44,6 @@ class MCTSAgentEnsemble(MCTSAgent):
 
         self.env.reset()
 
-        # Set the current model for the inference server
         self.inference_server.set_model(model)
 
         # Since each worker runs its own separate determinised future, the trees cannot

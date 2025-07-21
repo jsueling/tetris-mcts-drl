@@ -10,17 +10,19 @@ class InferenceServer:
     """Synchronous inference server to handle requests for model inference in parallel processes."""
 
     def __init__(self, model, request_queue, response_queues):
-        self.model = model
         self.request_queue = request_queue
         self.response_queues = response_queues
         self.server_process = mp.Process(
             target=self._handle_inference_requests,
-            args=(self.request_queue, self.response_queues, self.model)
+            args=(self.request_queue, self.response_queues, model)
         )
 
     def set_model(self, model):
         """Set the model for the inference server to use for evaluation."""
-        self.model = model
+        self.request_queue.put({
+            "command": "set_model",
+            "state_dict": model.state_dict()
+        })
 
     def start(self):
         """Start the inference server in a separate process."""
@@ -56,8 +58,16 @@ class InferenceServer:
                     # Shutdown signal None received
                     if request is None:
                         return
+
+                    if request.get('command') == 'set_model':
+                        # Update model local to this process since object references
+                        # are not shared between processes
+                        model.load_state_dict(request['state_dict'])
+                        continue
+
                     requests.append(request)
                     states.append(request['state'])
+
                 except mp.queues.Empty:
                     if requests:
                         break
@@ -67,9 +77,9 @@ class InferenceServer:
                 dtype=torch.float32
             ).to(model.device)
 
-            self.model.eval()
+            model.eval()
             with torch.no_grad():
-                policy_logits, value = self.model(states_gpu)
+                policy_logits, value = model(states_gpu)
                 policy_logits = policy_logits.cpu().numpy()
                 value = value.cpu().numpy()
 
@@ -103,9 +113,7 @@ class AsyncInferenceServer():
     def start(self):
         """Start the asynchronous inference server."""
         self.server_task = asyncio.create_task(
-            self._handle_inference_requests_async(
-                self.request_queue, self.response_queues, self.model
-            )
+            self._handle_inference_requests_async(self.request_queue, self.response_queues)
         )
 
     async def stop(self):
@@ -114,7 +122,7 @@ class AsyncInferenceServer():
         await self.request_queue.put(None)
         await self.server_task
 
-    async def _handle_inference_requests_async(self, request_queue, response_queues, model):
+    async def _handle_inference_requests_async(self, request_queue, response_queues):
         """
         Manage model inference requests from asynchronous workers in a single process
         """
@@ -142,7 +150,6 @@ class AsyncInferenceServer():
             policy_logits, values = await loop.run_in_executor(
                 None,
                 self._model_inference,
-                model,
                 states
             )
 
@@ -155,16 +162,17 @@ class AsyncInferenceServer():
                     'value': val.item()
                 })
 
-    def _model_inference(self, model, states):
+    def _model_inference(self, states):
         """
         Perform model inference on the given states.
         This is a helper method to encapsulate the inference logic.
         """
+
         states_gpu = torch.tensor(
             np.array(states),
             dtype=torch.float32
-        ).to(model.device)
-        model.eval()
+        ).to(self.model.device)
+        self.model.eval()
         with torch.no_grad():
-            policy_logits, value = model(states_gpu)
+            policy_logits, value = self.model(states_gpu)
             return policy_logits.cpu().numpy(), value.cpu().numpy()

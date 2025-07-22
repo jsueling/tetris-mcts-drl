@@ -95,7 +95,7 @@ class MCTreeNodeDeterminised:
         # ∑_b N(s, b)
         parent_visit_count = self.visit_count
 
-        children = list(self.children.values())
+        children = np.array(list(self.children.values()))
 
         # N(s, a) for each child node
         visit_counts = np.array([child.visit_count for child in children], dtype=np.float32)
@@ -125,7 +125,9 @@ class MCTreeNodeDeterminised:
         puct_values = q_value_estimates + C_PUCT * prior_probabilities \
             * np.sqrt(parent_visit_count) / (visit_counts + 1)
 
-        return children[np.argmax(puct_values)]
+        max_puct_children = children[puct_values == np.max(puct_values)]
+
+        return np.random.choice(max_puct_children)
 
     def select(self) -> 'MCTreeNodeDeterminised':
         """
@@ -344,7 +346,7 @@ class MCDecisionNodeAsync:
 
         parent_visit_count = self.visit_count
 
-        chance_nodes = list(self.chance_node_children.values())
+        chance_nodes = np.array(list(self.chance_node_children.values()))
 
         # The sum of visit counts to each chance node
         visit_counts = np.array([
@@ -379,7 +381,9 @@ class MCDecisionNodeAsync:
         puct_values = expected_q_value_estimates + C_PUCT * prior_probabilities \
             * np.sqrt(parent_visit_count) / (visit_counts + 1)
 
-        return chance_nodes[np.argmax(puct_values)]
+        max_puct_children = chance_nodes[puct_values == np.max(puct_values)]
+
+        return np.random.choice(max_puct_children)
 
     def select(self) -> 'MCDecisionNodeAsync':
         """
@@ -589,7 +593,7 @@ class MCDecisionNodeAsync:
         # Select an action based on the probabilities derived from visit counts
         chosen_action = np.random.choice(actions, p=visit_probs)
 
-        tree_policy[np.array(actions)] = visit_probs
+        tree_policy[actions] = visit_probs
 
         return chosen_action, tree_policy
 

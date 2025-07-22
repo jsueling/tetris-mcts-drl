@@ -44,12 +44,7 @@ class MCTSAgent:
         )
         self.env = Tetris()
         self.score_normaliser = ScoreNormaliser()
-        self.checkpoint = Checkpoint(
-            name=checkpoint_name,
-            buffer=self.buffer,
-            model=self.model,
-            score_normaliser=self.score_normaliser
-        )
+        self.checkpoint = Checkpoint(name=checkpoint_name, agent=self)
 
         self.batch_size = batch_size
         # Number of workers for parallel MCTS execution
@@ -76,7 +71,7 @@ class MCTSAgent:
         total_loss = policy_loss + value_loss
         total_loss.backward()
         self.candidate_model.optimiser.step()
-        self.candidate_model.scheduler.step(total_loss)
+        self.candidate_model.scheduler.step()
 
         self.checkpoint.log_training_loss(
             policy_loss.detach().cpu().item(),
@@ -134,10 +129,7 @@ class MCTSAgent:
                 # Candidate benchmarked and model possibly replaced
                 self.benchmark_candidate()
 
-            self.checkpoint.save_iteration(
-                best_model=self.model,
-                max_benchmark_score=self.max_benchmark_score
-            )
+            self.checkpoint.save_iteration()
 
     def process_transitions(self, transitions, final_score):
         """Process transitions after an episode ends."""

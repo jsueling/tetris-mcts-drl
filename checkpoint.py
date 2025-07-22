@@ -6,21 +6,23 @@ import os
 import glob
 import random
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 
+if TYPE_CHECKING:
+    from mcts_agent import MCTSAgent
+
 class Checkpoint:
     """A class that handles saving and loading the entire training state of the agent"""
 
-    def __init__(self, name, buffer, model, score_normaliser):
+    def __init__(self, name, agent: "MCTSAgent"):
 
         directory = "./out/"
         os.makedirs(directory, exist_ok=True)
         self.out_file_prefix = directory + name
-        self.buffer = buffer
-        self.model = model
-        self.score_normaliser = score_normaliser
+        self.agent = agent
 
         # == All iterations ==
 
@@ -46,11 +48,11 @@ class Checkpoint:
         self.current_policy_losses = []
         self.current_value_losses = []
 
-    def log_episode_results(self, start_time, final_score, step_count):
+    def log_episode_results(self, start_time, episode_score, step_count):
         """Log results of a single episode."""
 
         end_time = time.time()
-        self.episode_scores.append(final_score)
+        self.episode_scores.append(episode_score)
         self.steps_per_episode.append(step_count)
         self.episode_times.append(round(float(end_time - start_time), 2))
 
@@ -59,18 +61,15 @@ class Checkpoint:
         self.current_policy_losses.append(round(float(policy_loss), 3))
         self.current_value_losses.append(round(float(value_loss), 3))
 
-    def save_iteration(self, best_model, max_benchmark_score):
+    def save_iteration(self):
         """
         Save entire training state per iteration to allow complete restoration.
         (computationally expensive, so it is done less frequently)
         """
 
-        # Update to the best performing model
-        self.model = best_model
-
         # Iteration ends
         self.completed_iterations += 1
-        self.benchmark_scores.append(max_benchmark_score)
+        self.benchmark_scores.append(self.agent.max_benchmark_score)
         self.mean_score_per_episode.append(round(float(np.mean(self.episode_scores)), 2))
         self.mean_steps_per_episode.append(round(float(np.mean(self.steps_per_episode)), 2))
         self.mean_time_per_episode.append(round(float(np.mean(self.episode_times)), 2))
@@ -109,7 +108,7 @@ class Checkpoint:
             "python_random": random.getstate(),
             "numpy_random": np.random.get_state(),
             "torch_random": torch.get_rng_state(),
-            "score_normalising_factor": self.score_normaliser.normalising_factor,
+            "score_normalising_factor": self.agent.score_normaliser.normalising_factor,
         }
 
         if torch.cuda.is_available():
@@ -118,8 +117,8 @@ class Checkpoint:
         # Write to temporary files
         np.save(tmp_results_file_path, training_results)
         np.save(tmp_state_data_file_path, training_state_data)
-        self.buffer.save(tmp_buffer_file_path)
-        self.model.save(tmp_model_file_path)
+        self.agent.buffer.save(tmp_buffer_file_path)
+        self.agent.model.save(tmp_model_file_path)
 
         # Atomic overwrite, either the checkpoint is fully saved or not at all
         os.replace(tmp_results_file_path, results_file_path)
@@ -142,7 +141,7 @@ class Checkpoint:
             if torch.cuda.is_available() and "torch_cuda_random" in training_state:
                 torch.cuda.set_rng_state(training_state["torch_cuda_random"])
 
-            self.score_normaliser.normalising_factor = \
+            self.agent.score_normaliser.normalising_factor = \
                 training_state["score_normalising_factor"]
 
         except FileNotFoundError:
@@ -150,11 +149,12 @@ class Checkpoint:
 
         # Restore buffer state
         buffer_file_path = self.out_file_prefix + "_buffer.pth"
-        self.buffer.load(buffer_file_path)
+        self.agent.buffer.load(buffer_file_path)
 
         # Restore model state
         model_file_path = self.out_file_prefix + '_model.pth'
-        self.model.load(model_file_path)
+        if self.agent.model.load(model_file_path) is True:
+            self.agent.candidate_model.load(model_file_path)
 
         # Restore training results state
         try:

@@ -204,11 +204,16 @@ class A0ResNet(nn.Module):
         torch.save(self.state_dict(), file_path)
 
     def load(self, file_path):
-        """Load the model state from the specified file path."""
+        """
+        Load the model state from the specified file path.
+        Returns True if the model was successfully loaded and False otherwise.
+        """
         try:
             self.load_state_dict(torch.load(file_path, map_location=self.device))
+            return True
         except FileNotFoundError:
             print(f"No model state found at {file_path}")
+            return False
 
 class A0ResBlock(nn.Module):
     """

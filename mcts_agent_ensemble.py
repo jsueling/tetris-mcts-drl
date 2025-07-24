@@ -32,7 +32,8 @@ class MCTSAgentEnsemble(MCTSAgent):
         self.inference_server = InferenceServer(
             model=self.model,
             request_queue=self.request_queue,
-            response_queues=self.response_queues
+            response_queues=self.response_queues,
+            n_workers=self.n_workers
         )
         self.inference_server.start()
 
@@ -205,7 +206,7 @@ def ensemble_mcts_helper(
     for _ in range(iterations):
         root_node.run_iteration()
 
-    actions, children = zip(*root_node.children.items())
+    actions, children = zip(*root_node.children.items()) if root_node.children else ([], [])
 
     result_queue.put({
         "actions": np.array(actions),

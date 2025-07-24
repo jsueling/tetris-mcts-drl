@@ -28,7 +28,8 @@ class MCTSAgentAsync(MCTSAgent):
         self.inference_server = AsyncInferenceServer(
             model=self.model,
             request_queue=self.request_queue,
-            response_queues=self.response_queues
+            response_queues=self.response_queues,
+            n_workers=self.n_workers
         )
 
     def train(self):

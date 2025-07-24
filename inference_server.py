@@ -9,12 +9,12 @@ import torch
 class InferenceServer:
     """Synchronous inference server to handle requests for model inference in parallel processes."""
 
-    def __init__(self, model, request_queue, response_queues):
+    def __init__(self, model, request_queue, response_queues, n_workers):
         self.request_queue = request_queue
         self.response_queues = response_queues
         self.server_process = mp.Process(
             target=self._handle_inference_requests,
-            args=(self.request_queue, self.response_queues, model)
+            args=(self.request_queue, self.response_queues, model, n_workers)
         )
 
     def set_model(self, model):
@@ -40,7 +40,7 @@ class InferenceServer:
         for q in self.response_queues.values():
             q.join_thread()
 
-    def _handle_inference_requests(self, request_queue, response_queues, model):
+    def _handle_inference_requests(self, request_queue, response_queues, model, n_workers):
         """
         Manage model inference requests from multiple workers,
         process them using the model and send back the response
@@ -54,6 +54,11 @@ class InferenceServer:
             # Collect requests from the request queue until a timeout occurs
             while True:
                 try:
+
+                    # Break early if all of the workers are waiting
+                    if len(requests) == n_workers:
+                        break
+
                     request = request_queue.get(timeout=1e-4)
                     # Shutdown signal None received
                     if request is None:
@@ -99,9 +104,11 @@ class AsyncInferenceServer():
         self,
         model,
         request_queue: asyncio.Queue,
-        response_queues: dict[int, asyncio.Queue]
+        response_queues: dict[int, asyncio.Queue],
+        n_workers
     ):
         self.model = model
+        self.n_workers = n_workers
         self.request_queue = request_queue
         self.response_queues = response_queues
         self.server_task = None
@@ -137,6 +144,11 @@ class AsyncInferenceServer():
             # Collect requests from the request queue until a timeout occurs
             while True:
                 try:
+
+                    # Break early if all of the workers are waiting
+                    if len(requests) == self.n_workers:
+                        break
+
                     request = await asyncio.wait_for(request_queue.get(), timeout=1e-4)
                     # Shutdown signal None received
                     if request is None:

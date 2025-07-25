@@ -1,6 +1,6 @@
 """MCTS + DRL agent that learns how to play Tetris"""
 
-from time import time
+import time
 
 from tqdm import tqdm
 import numpy as np

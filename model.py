@@ -14,7 +14,10 @@ import torch
 from torch import nn
 import numpy as np
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device(
+    "cuda" if torch.cuda.is_available() else \
+    ("mps" if torch.backends.mps.is_available() else "cpu")
+)
 
 class A0ResNet(nn.Module):
     """

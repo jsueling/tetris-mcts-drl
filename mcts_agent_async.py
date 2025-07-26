@@ -90,7 +90,7 @@ class MCTSAgentAsync(MCTSAgent):
                 # Candidate benchmarked and model possibly replaced
                 await self.benchmark_candidate_async()
 
-            self.checkpoint.save_iteration()
+            self.checkpoint.save_iteration(iter_idx)
 
     async def run_episode_async(self, model, benchmark=False, explore_threshold=30):
         """

@@ -61,10 +61,12 @@ class Checkpoint:
         self.current_policy_losses.append(round(float(policy_loss), 3))
         self.current_value_losses.append(round(float(value_loss), 3))
 
-    def save_iteration(self):
+    def save_iteration(self, iter_idx: int):
         """
         Save entire training state per iteration to allow complete restoration.
-        (computationally expensive, so it is done less frequently)
+        1. Saves latest checkpoint to a temporary file and then atomically overwrites the
+        previous checkpoint file.
+        2. Saves persistent checkpoints every 10 iterations.
         """
 
         # Iteration ends
@@ -125,6 +127,21 @@ class Checkpoint:
         os.replace(tmp_state_data_file_path, state_data_file_path)
         os.replace(tmp_model_file_path, model_file_path)
         os.replace(tmp_buffer_file_path, buffer_file_path)
+
+        # Create persistent checkpoint files every 10 iterations
+        if iter_idx % 10 == 0:
+
+            iteration_identifier = f"{self.out_file_prefix}_iteration_{iter_idx}"
+
+            persistent_training_results_fp = iteration_identifier + "_results.npy"
+            persistent_state_data_fp = iteration_identifier + "_state_data.npy"
+            persistent_buffer_fp = iteration_identifier + "_buffer.pth"
+            persistent_model_fp = iteration_identifier + "_model.pth"
+
+            np.save(persistent_training_results_fp, training_results)
+            np.save(persistent_state_data_fp, training_state_data)
+            self.agent.buffer.save(persistent_buffer_fp)
+            self.agent.model.save(persistent_model_fp)
 
     def restore_checkpoint(self):
         """Attempt to restore state from checkpoint files and return checkpoint results."""

@@ -21,7 +21,7 @@ class MCTSAgent:
         self,
         checkpoint_name,
         batch_size=BATCH_SIZE,
-        total_iterations=100,
+        total_iterations=200,
         episodes_per_iteration=200,
         num_benchmark_episodes=50,
         updates_per_iteration=40,
@@ -129,7 +129,7 @@ class MCTSAgent:
                 # Candidate benchmarked and model possibly replaced
                 self.benchmark_candidate()
 
-            self.checkpoint.save_iteration()
+            self.checkpoint.save_iteration(iter_idx)
 
     def process_transitions(self, transitions, final_score):
         """Process transitions after an episode ends."""

@@ -92,7 +92,7 @@ class MCTSAgentAsync(MCTSAgent):
 
             self.checkpoint.save_iteration()
 
-    async def run_episode_async(self, model, benchmark=False):
+    async def run_episode_async(self, model, benchmark=False, explore_threshold=30):
         """
         Runs a single episode of an MCTS agent that uses multiple workers
         to expand a shared tree using async/await to mimic threading.
@@ -131,7 +131,7 @@ class MCTSAgentAsync(MCTSAgent):
             )
 
             chosen_action, tree_policy = root_node.decide_action(
-                tau=0.0 if (benchmark is True) or (step_count >= 30) else 1.0
+                tau=0.0 if (benchmark is True) or (step_count >= explore_threshold) else 1.0
             )
 
             if benchmark is False:

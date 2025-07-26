@@ -6,6 +6,7 @@ selection and tree policy derived from visit counts.
 
 import multiprocessing as mp
 import random
+import zlib
 
 import torch
 import numpy as np
@@ -36,6 +37,7 @@ class MCTSAgentEnsemble(MCTSAgent):
             n_workers=self.n_workers
         )
         self.inference_server.start()
+        self.episode_count = 0
 
     def run_episode(self, model, benchmark=False):
         """
@@ -57,15 +59,11 @@ class MCTSAgentEnsemble(MCTSAgent):
 
             # Take the majority vote of the MCTS ensemble on which action to take and
             # the tree policy based on aggregate visit counts.
-            chosen_action, available_actions, tree_policy =  run_ensemble_mcts(
-                self.env,
-                self.request_queue,
-                self.response_queues,
-                self.result_queue,
-                step_count,
-                n_workers=self.n_workers,
-                benchmark=benchmark
-            )
+            chosen_action, available_actions, tree_policy =  \
+                self.run_ensemble_mcts(
+                    step_count,
+                    benchmark=benchmark
+                )
 
             if benchmark is False:
 
@@ -89,96 +87,97 @@ class MCTSAgentEnsemble(MCTSAgent):
 
         final_score = self.env.score
 
+        self.episode_count += 1
+
         if benchmark is True:
             return final_score, None, None
 
         return final_score, transitions, step_count
 
-def run_ensemble_mcts(
-    env: Tetris,
-    request_queue: mp.Queue,
-    response_queues: dict[int, mp.Queue],
-    result_queue: mp.Queue,
-    step_count: int,
-    n_workers: int,
-    explore_threshold=30,
-    tau=1.0, # Temperature parameter for action selection
-    benchmark=False
-):
-    """
-    Multiple workers run MCTS iterations in parallel from the root node.
-    The stochastic outcome (Tetromino generation) is determinised per
-    node expansion i.e. a single future is sampled and shared among child nodes.
-    Therefore, we take the average/majority vote from many parallel determinisations
-    to get a more robust action decision/transitions at the root.
+    def run_ensemble_mcts(
+        self,
+        step_count: int,
+        explore_threshold=30,
+        tau=1.0, # Temperature parameter for action selection
+        benchmark=False
+    ):
+        """
+        Multiple workers run MCTS iterations in parallel from the root node.
+        The stochastic outcome (Tetromino generation) is determinised per
+        node expansion i.e. a single future is sampled and shared among child nodes.
+        Therefore, we take the average/majority vote from many parallel determinisations
+        to get a more robust action decision/transitions at the root.
 
-    Returns:
-    - chosen_action: The action selected by the MCTS ensemble
-    - available_actions: Actions available to the root node
-    - tree_policy: The probability distribution over actions given by mean visit counts
-    """
+        Returns:
+        - chosen_action: The action selected by the MCTS ensemble
+        - available_actions: Actions available to the root node
+        - tree_policy: The probability distribution over actions given by mean visit counts
+        """
 
-    processes = []
+        processes = []
 
-    for worker_id in range(n_workers):
+        for worker_id in range(self.n_workers):
 
-        # Each process has its own seed for reproducibility and to prevent the same
-        # random number generation (unique in base n_workers)
-        process_seed = (step_count * n_workers + worker_id) % RANDOM_SEED_MODULUS
+            # Each process has its own seed for reproducibility and to prevent the same
+            # random number generation
+            seed_tuple = (self.episode_count, step_count, worker_id)
+            seed_string = "-".join(map(str, seed_tuple))
+            process_seed = zlib.adler32(seed_string.encode('utf-8')) % RANDOM_SEED_MODULUS
 
-        p = mp.Process(
-            target=ensemble_mcts_helper,
-            args=(
-                env.copy(),
-                request_queue,
-                response_queues[worker_id],
-                worker_id,
-                result_queue,
-                MCTS_ITERATIONS,
-                process_seed
+            p = mp.Process(
+                target=ensemble_mcts_helper,
+                args=(
+                    self.env.copy(),
+                    self.request_queue,
+                    self.response_queues[worker_id],
+                    worker_id,
+                    self.result_queue,
+                    MCTS_ITERATIONS,
+                    process_seed
+                )
             )
+            p.start()
+            processes.append(p)
+
+        # Block until all processes are finished
+        for p in processes:
+            p.join()
+
+        # Fetch results from all processes
+        root_nodes = [self.result_queue.get() for _ in processes]
+
+        # Stack visit counts from all root nodes and compute the mean
+        mean_visit_counts = np.mean(
+            [node["visit_counts"] for node in root_nodes],
+            axis=0
         )
-        p.start()
-        processes.append(p)
 
-    # Block until all processes are finished
-    for p in processes:
-        p.join()
+        # The next action and tree policy is derived from the aggregate visit counts
+        # of actions available to the root nodes in the simulations.
 
-    # Fetch results from all processes
-    root_nodes = [result_queue.get() for _ in processes]
+        tree_policy = np.zeros(ACTION_SPACE, dtype=np.float32)
+        available_actions = root_nodes[0]["actions"]
 
-    # Stack visit counts from all root nodes and compute the mean
-    mean_visit_counts = np.mean(
-        [node["visit_counts"] for node in root_nodes],
-        axis=0
-    )
+        if len(available_actions) == 0:
+            # Game ends
+            chosen_action = -1
+        elif (benchmark is True) or (step_count >= explore_threshold):
+            # Greedy when benchmarking or after exploratory steps
+            highest_visit_actions = \
+                available_actions[mean_visit_counts == np.max(mean_visit_counts)]
+            chosen_action = np.random.choice(highest_visit_actions)
+            tree_policy[chosen_action] = 1.0
+        else:
+            # Allow exploratory steps at episode start
+            mean_visit_counts = mean_visit_counts ** (1 / tau)
+            visit_probabilities = mean_visit_counts / np.sum(mean_visit_counts)
+            tree_policy[available_actions] = visit_probabilities
+            chosen_action = np.random.choice(ACTION_SPACE, p=tree_policy)
 
-    # The next action and tree policy is derived from the aggregate visit counts
-    # of actions available to the root nodes in the simulations.
-
-    tree_policy = np.zeros(ACTION_SPACE, dtype=np.float32)
-    available_actions = root_nodes[0]["actions"]
-
-    if len(available_actions) == 0:
-        # Game ends
-        chosen_action = -1
-    elif (benchmark is True) or (step_count >= explore_threshold):
-        # Greedy when benchmarking or after exploratory steps
-        highest_visit_actions = available_actions[mean_visit_counts == np.max(mean_visit_counts)]
-        chosen_action = np.random.choice(highest_visit_actions)
-        tree_policy[chosen_action] = 1.0
-    else:
-        # Allow exploratory steps at episode start
-        mean_visit_counts = mean_visit_counts ** (1 / tau)
-        visit_probabilities = mean_visit_counts / np.sum(mean_visit_counts)
-        tree_policy[available_actions] = visit_probabilities
-        chosen_action = np.random.choice(ACTION_SPACE, p=tree_policy)
-
-    return chosen_action, available_actions, tree_policy
+        return chosen_action, available_actions, tree_policy
 
 def ensemble_mcts_helper(
-    env: Tetris,
+    copy_env: Tetris,
     request_queue: mp.Queue,
     response_queue: mp.Queue,
     worker_id: int,
@@ -196,7 +195,7 @@ def ensemble_mcts_helper(
     random.seed(process_seed)
 
     root_node = MCTreeNodeDeterminised(
-        env=env,
+        env=copy_env,
         request_queue=request_queue,
         response_queue=response_queue,
         worker_id=worker_id,

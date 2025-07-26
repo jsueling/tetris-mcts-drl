@@ -24,7 +24,7 @@ class MCTSAgent:
         total_iterations=100,
         episodes_per_iteration=200,
         num_benchmark_episodes=50,
-        updates_per_iteration=20,
+        updates_per_iteration=40,
         n_workers=10
     ):
         self.model = A0ResNet(

@@ -96,6 +96,7 @@ class MCTSAgent:
 
         for iter_idx in tqdm(
             range(starting_iteration, self.total_iterations),
+            initial=starting_iteration,
             total=self.total_iterations,
             desc="Training MCTS agent",
             unit="iteration"

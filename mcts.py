@@ -15,7 +15,7 @@ import numpy as np
 from tetris_env import Tetris, Tetromino
 
 ACTION_SPACE = 40 # Rotations * Columns
-C_PUCT = 1.0  # Hyperparameter modulating prior-guided exploration bonus in pUCT
+C_PUCT = 1.0  # Hyperparameter modulating prior-guided exploration bonus in PUCT
 
 # Dirichlet noise parameters for exploration, applied to actions at the root node only
 DIRICHLET_EPSILON = 0.25
@@ -88,7 +88,7 @@ class MCTreeNodeDeterminised:
 
     def get_best_child_by_puct(self) -> 'MCTreeNodeDeterminised':
         """
-        Returns this node's child with the maximum pUCT value
+        Returns this node's child with the maximum PUCT value
         (Predictor + Upper Confidence Bound for Trees)
         """
 
@@ -98,16 +98,19 @@ class MCTreeNodeDeterminised:
         children = np.array(list(self.children.values()))
 
         # N(s, a) for each child node
-        visit_counts = np.array([child.visit_count for child in children], dtype=np.float32)
+        visit_counts = np.array([
+            child.visit_count for child in children
+        ], dtype=np.float32)
 
         # W(s, a) for each child node
-        q_value_sums = np.array([child.q_value_sum for child in children], dtype=np.float32)
+        q_value_sums = np.array([
+            child.q_value_sum for child in children
+        ], dtype=np.float32)
 
         # P(s, a) for each child node
-        prior_probabilities = np.array(
-            [child.prior_probability for child in children],
-            dtype=np.float32
-        )
+        prior_probabilities = np.array([
+            child.prior_probability for child in children
+        ], dtype=np.float32)
 
         # q_value is an estimate of the expected value of the action,
         # where the child node represents the state immediately following
@@ -119,20 +122,27 @@ class MCTreeNodeDeterminised:
 
         np.divide(q_value_sums, visit_counts, out=q_value_estimates, where=visit_counts > 0)
 
-        # Balance exploration and exploitation using the modified pUCT formula to recursively
-        # select the child node with the highest pUCT value until reaching a leaf node:
+        # Balance exploration and exploitation using the modified PUCT formula to recursively
+        # select the child node with the highest PUCT value until reaching a leaf node:
         # Q(s, a) + c_puct * P(s, a) * sqrt(∑_b N(s, b)) / (N(s, a) + 1)
         puct_values = q_value_estimates + C_PUCT * prior_probabilities \
             * np.sqrt(parent_visit_count) / (visit_counts + 1)
 
-        max_puct_children = children[puct_values == np.max(puct_values)]
+        max_puct_indices = []
+        max_puct_value = float('-inf')
+        for i, puct_value in enumerate(puct_values):
+            if puct_value > max_puct_value:
+                max_puct_value = puct_value
+                max_puct_indices = [i]
+            elif puct_value == max_puct_value:
+                max_puct_indices.append(i)
 
-        return np.random.choice(max_puct_children)
+        return children[np.random.choice(max_puct_indices)]
 
     def select(self) -> 'MCTreeNodeDeterminised':
         """
-        Balance exploration and exploitation using the NN-augmented pUCT formula to recursively
-        select a child node with the highest pUCT value until reaching a leaf node
+        Balance exploration and exploitation using the NN-augmented PUCT formula to recursively
+        select a child node with the highest PUCT value until reaching a leaf node
         """
         node = self
         # Traverse the tree until reaching a leaf node
@@ -340,7 +350,7 @@ class MCDecisionNodeAsync:
 
     def select_best_puct_child(self) -> 'ChanceNode':
         """
-        Returns the chance node with the best expected pUCT score based on
+        Returns the chance node with the best expected PUCT score based on
         that node's children (Predictor + Upper Confidence Bound for Trees).
         """
 
@@ -348,26 +358,26 @@ class MCDecisionNodeAsync:
 
         chance_nodes = np.array(list(self.chance_node_children.values()))
 
-        # The sum of visit counts to each chance node
+        # N(s, a)
         visit_counts = np.array([
             chance_node.visit_count for chance_node in chance_nodes
         ], dtype=np.float32)
 
-        # The sum of Q-value estimates of each chance node, subtracting the virtual loss
-        # during selection to discourage workers from evaluating the same node
+        # W(s, a) including virtual loss term to discourage duplicate evaluations
         q_value_sums = np.array([
             (chance_node.q_value_sum - chance_node.virtual_loss)
             for chance_node in chance_nodes
         ], dtype=np.float32)
 
-        # The prior probability of choosing the action leading to each chance node
-        prior_probabilities = np.array(
-            [chance_node.prior_probability for chance_node in chance_nodes],
-            dtype=np.float32
-        )
+        # P(s, a)
+        prior_probabilities = np.array([
+            chance_node.prior_probability for chance_node in chance_nodes
+        ], dtype=np.float32)
 
         # Expected Q-value estimates are a noisy estimate of the value of an action
         # averaged over every stochastic outcome
+
+        # Q(s, a) = W(s, a) / N(s, a)
         expected_q_value_estimates = np.zeros_like(q_value_sums, dtype=np.float32)
 
         np.divide(
@@ -381,14 +391,21 @@ class MCDecisionNodeAsync:
         puct_values = expected_q_value_estimates + C_PUCT * prior_probabilities \
             * np.sqrt(parent_visit_count) / (visit_counts + 1)
 
-        max_puct_children = chance_nodes[puct_values == np.max(puct_values)]
+        max_puct_indices = []
+        max_puct_value = float('-inf')
+        for i, puct_value in enumerate(puct_values):
+            if puct_value > max_puct_value:
+                max_puct_value = puct_value
+                max_puct_indices = [i]
+            elif puct_value == max_puct_value:
+                max_puct_indices.append(i)
 
-        return np.random.choice(max_puct_children)
+        return chance_nodes[np.random.choice(max_puct_indices)]
 
     def select(self) -> 'MCDecisionNodeAsync':
         """
-        Balance exploration and exploitation using the NN-augmented pUCT formula to recursively
-        sample a child node from the highest pUCT-valued action until reaching a leaf node
+        Balance exploration and exploitation using the NN-augmented PUCT formula to recursively
+        sample a child node from the highest PUCT-valued action until reaching a leaf node
         Returns:
         - decision_node: The leaf decision node reached by the selection process which is the first
         node that is either not evaluated or is a terminal node.
@@ -418,16 +435,16 @@ class MCDecisionNodeAsync:
             # a child with minimum visit count selected randomly to converge to expected
             # values faster since the distribution of tetrominoes is randomly uniform.
 
-            chance_children = chance_node.decision_node_children
+            least_visited_children = []
+            min_visit_count = float('inf')
+            for node in chance_node.decision_node_children:
+                if node.visit_count < min_visit_count:
+                    min_visit_count = node.visit_count
+                    least_visited_children = [node]
+                elif node.visit_count == min_visit_count:
+                    least_visited_children.append(node)
 
-            min_visit_count = min(decision_node.visit_count for decision_node in chance_children)
-
-            least_visited_tetromino_types = [
-                tetromino_type for tetromino_type, decision_node in enumerate(chance_children) if
-                decision_node.visit_count == min_visit_count
-            ]
-
-            decision_node = chance_children[np.random.choice(least_visited_tetromino_types)]
+            decision_node = np.random.choice(least_visited_children)
 
     async def nn_evaluation(self, worker_id: int):
         """
@@ -487,22 +504,22 @@ class MCDecisionNodeAsync:
             action_probabilities[legal_actions] *= (1 - DIRICHLET_EPSILON)
             action_probabilities[legal_actions] += DIRICHLET_EPSILON * dirichlet_noise
 
-        for action_index in range(ACTION_SPACE):
+        for action_idx in range(ACTION_SPACE):
 
-            if not legal_actions[action_index]:
+            if not legal_actions[action_idx]:
                 continue
 
             # Create a chance node for each action
             chance_node = ChanceNode(
                 parent=self,
-                prior_probability=action_probabilities[action_index]
+                prior_probability=action_probabilities[action_idx]
             )
 
             for next_tetromino_type in range(len(Tetromino.figures)):
 
                 copy_env = self.env.copy()
                 # Place last Tetromino in the copied environment
-                _ = copy_env.step(action_index)
+                _ = copy_env.step(action_idx)
                 # Create the next Tetromino after the last Tetromino was placed
                 copy_env.create_tetromino(next_tetromino_type)
 
@@ -519,7 +536,7 @@ class MCDecisionNodeAsync:
                 chance_node.decision_node_children[next_tetromino_type] = child_decision_node
 
             # The chance node created becomes an immediate child of the top-level decision node
-            self.chance_node_children[action_index] = chance_node
+            self.chance_node_children[action_idx] = chance_node
 
         # Setting evaluated to True any earlier might lead to other workers
         # incorrectly traversing to non-existent children of this node, throwing an error.
@@ -543,11 +560,7 @@ class MCDecisionNodeAsync:
             # it does not need to be incremented again during backpropagation.
 
             chance_node = decision_node.parent
-
-            # Update necessary statistics of nodes. Most are aggregated at the chance
-            # node level since we compute the expected result over all stochastic outcomes.
-
-            # Remove virtual loss during backpropagation
+            # Remove virtual loss affecting Q-value during backpropagation
             chance_node.virtual_loss -= 1
             chance_node.q_value_sum += q_value
 
@@ -569,28 +582,40 @@ class MCDecisionNodeAsync:
 
         tree_policy = np.zeros(ACTION_SPACE, dtype=np.float32)
 
-        if len(self.chance_node_children) == 0:
+        if self.is_terminal:
             return -1, tree_policy
 
         actions, chance_nodes = zip(*self.chance_node_children.items())
 
         actions = np.array(actions)
 
-        # The sum of visit counts to all child nodes of each chance node
-        visit_counts = np.array([
-            chance_node.visit_count for chance_node in chance_nodes
-        ], dtype=np.float32)
+        visit_counts = []
+        sum_visit_counts = 0
+        max_visit_count = 1
+        for node in chance_nodes:
+            visit_counts.append(node.visit_count)
+            sum_visit_counts += node.visit_count
+            max_visit_count = max(max_visit_count, node.visit_count)
+
+        visit_counts = np.array(visit_counts, dtype=np.float32)
 
         if tau == 0.0:
-            highest_visit_actions = actions[visit_counts == np.max(visit_counts)]
+            highest_visit_actions = actions[visit_counts == max_visit_count]
             chosen_action = np.random.choice(highest_visit_actions)
             tree_policy[chosen_action] = 1.0
             return chosen_action, tree_policy
 
         # Normalise visit counts using softmax with temperature tau
-        visit_counts = visit_counts ** (1 / tau)
-        visit_probs = visit_counts / np.sum(visit_counts)
+        if tau == 1.0:
+            # Exponentiation by 1 has no effect
+            visit_probs = visit_counts / sum_visit_counts
+        else:
+            visit_counts = visit_counts ** (1 / tau)
+            # Must recalculate sum after exponentiation
+            visit_probs = visit_counts / np.sum(visit_counts)
+
         # Select an action based on the probabilities derived from visit counts
+
         chosen_action = np.random.choice(actions, p=visit_probs)
 
         tree_policy[actions] = visit_probs
@@ -599,7 +624,7 @@ class MCDecisionNodeAsync:
 
     def descend(
         self,
-        action: int,
+        action_idx: int,
         tetromino_type: int
     ) -> 'MCDecisionNodeAsync':
         """
@@ -612,7 +637,7 @@ class MCDecisionNodeAsync:
         - successor: The new root node of the subtree corresponding
         to the action and Tetromino type.
         """
-        chance_node = self.chance_node_children[action]
+        chance_node = self.chance_node_children[action_idx]
         successor = chance_node.decision_node_children[tetromino_type]
 
         # Disconnect all parent pointers (references to the unused tree) to allow garbage collection

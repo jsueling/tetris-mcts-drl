@@ -205,9 +205,9 @@ def ensemble_mcts_helper(
     for _ in range(iterations):
         root_node.run_iteration()
 
-    actions, children = zip(*root_node.children.items()) if root_node.children else ([], [])
+    actions = root_node.available_actions
 
     result_queue.put({
-        "actions": np.array(actions, dtype=int),
-        "visit_counts": [child.visit_count for child in children]
+        "actions": actions,
+        "visit_counts": root_node.visit_counts[actions],
     })

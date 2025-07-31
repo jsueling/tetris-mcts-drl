@@ -14,7 +14,7 @@ class InferenceServer:
         self.response_queues = response_queues
         self.server_process = mp.Process(
             target=self._handle_inference_requests,
-            args=(self.request_queue, self.response_queues, model, n_workers)
+            args=(self.request_queue, self.response_queues, model.cpu(), n_workers, model.device)
         )
 
     def set_model(self, model):
@@ -40,11 +40,14 @@ class InferenceServer:
         for q in self.response_queues.values():
             q.join_thread()
 
-    def _handle_inference_requests(self, request_queue, response_queues, model, n_workers):
+    def _handle_inference_requests(self, request_queue, response_queues, model, n_workers, device):
         """
         Manage model inference requests from multiple workers,
         process them using the model and send back the response
         """
+
+        # Move model to device after multiprocessing start
+        model = model.to(device)
 
         while True:
 

@@ -11,6 +11,7 @@ import multiprocessing as mp
 import asyncio
 
 import numpy as np
+import torch
 
 from tetris_env import Tetris, Tetromino
 
@@ -40,6 +41,7 @@ class MCTreeNodeDeterminised:
         request_queue: mp.Queue,
         response_queue: mp.Queue,
         worker_id: int,
+        shared_buffer: Optional[torch.Tensor] = None,
         parent: Optional["MCTreeNodeDeterminised"] = None,
         is_root: bool = False,
         prev_action_idx: Optional[int] = None
@@ -55,6 +57,7 @@ class MCTreeNodeDeterminised:
         self.request_queue = request_queue
         self.response_queue = response_queue
         self.worker_id = worker_id
+        self.shared_buffer = shared_buffer
 
         # Backpropagation statistics used for selection of this node's children,
         # lazily allocated at expansion
@@ -155,6 +158,7 @@ class MCTreeNodeDeterminised:
                     request_queue=node.request_queue,
                     response_queue=node.response_queue,
                     worker_id=node.worker_id,
+                    shared_buffer=node.shared_buffer,
                     parent=node,
                     prev_action_idx=chosen_action_idx,
                 )
@@ -171,13 +175,22 @@ class MCTreeNodeDeterminised:
         - policy_logits: The logits for the action probabilities.
         - value: The estimated value of the current state.
         """
+        state_tensor = torch.tensor(
+            self.env.get_state(),
+            dtype=torch.float32
+        )
+        # Copy data to shared memory
+        self.shared_buffer.copy_(state_tensor)
+        # Passing shared memory tensors through the queue is a no-op:
+        # https://docs.pytorch.org/docs/stable/notes/multiprocessing.html#reuse-buffers-passed-through-a-queue
         self.request_queue.put({
-            "state": self.env.get_state(),
+            "state": self.shared_buffer,
             "worker_id": self.worker_id
         })
         response = self.response_queue.get()
         policy_logits = response["policy_logits"]
         value = response["value"]
+        self.shared_buffer = response["shared_buffer"]
         return policy_logits, value
 
     def evaluate(self) -> float:
@@ -251,6 +264,8 @@ class MCTreeNodeDeterminised:
         Backpropagate the results of the evaluation for all nodes visited in the trajectory,
         traversing parent nodes until reaching the root node.
         """
+        # Increment leaf node's total visit count
+        self.total_visit_count += 1
         node = self
         while node.parent:
             # The action leading to this node
@@ -427,10 +442,12 @@ class MCDecisionNodeAsync:
 
             decision_node.total_visit_count += 1
 
-            # JIT-initialised chance node object
+            # Chance node object, JIT-initialised when needed
             if decision_node.chance_node_children[chosen_action_idx] is None:
                 decision_node.chance_node_children[chosen_action_idx] = \
                     ChanceNode(parent=decision_node)
+
+            # Traverse to chance node
             chance_node = decision_node.chance_node_children[chosen_action_idx]
 
             # Stochastic outcome, transitioning to a decision node. Here we choose
@@ -439,16 +456,16 @@ class MCDecisionNodeAsync:
 
             min_visits = float('inf')
             min_visit_indices = []
-            for i, count in enumerate(chance_node.visit_counts):
-                if count < min_visits:
-                    min_visits = count
+            for i, visit_count in enumerate(chance_node.visit_counts):
+                if visit_count < min_visits:
+                    min_visits = visit_count
                     min_visit_indices = [i]
-                elif count == min_visits:
+                elif visit_count == min_visits:
                     min_visit_indices.append(i)
 
             random_min_visited_tetromino = np.random.choice(min_visit_indices)
 
-            # JIT-initialised decision node object
+            # Decision node object, JIT-initialised when needed
             if chance_node.decision_node_children[random_min_visited_tetromino] is None:
 
                 copy_env = decision_node.env.copy()
@@ -466,8 +483,12 @@ class MCDecisionNodeAsync:
 
             chance_node.visit_counts[random_min_visited_tetromino] += 1
 
+            # Traverse to decision node
             decision_node = chance_node.decision_node_children[random_min_visited_tetromino]
 
+        # Set the total visit count of the leaf node to 1
+        # The virtual loss visit is added here and then not decremented in backpropagation
+        decision_node.total_visit_count += 1
         return decision_node
 
     async def nn_evaluation(self, worker_id: int):
@@ -507,7 +528,9 @@ class MCDecisionNodeAsync:
 
         legal_actions = self.env.get_legal_actions()
 
-        if not np.any(legal_actions):
+        available_actions = np.where(legal_actions)[0]
+
+        if available_actions.size == 0:
             self.is_terminal = True
             return -1
 
@@ -533,7 +556,7 @@ class MCDecisionNodeAsync:
 
         self.visit_counts = np.zeros(ACTION_SPACE, dtype=np.float32)
         self.q_value_sums = np.zeros(ACTION_SPACE, dtype=np.float32)
-        self.available_actions = np.where(legal_actions)[0]
+        self.available_actions = available_actions
         self.chance_node_children = np.empty(ACTION_SPACE, dtype=object)
         self.prior_probabilities = action_probabilities
 
@@ -552,7 +575,9 @@ class MCDecisionNodeAsync:
         Backpropagate the results of the evaluation for all nodes visited in the trajectory,
         traversing parent nodes until reaching the root node.
         """
+
         decision_node = self
+
         while decision_node.parent:
 
             # Since visit count was already incremented during selection for virtual loss,
@@ -560,10 +585,11 @@ class MCDecisionNodeAsync:
 
             chance_node = decision_node.parent
 
-            # Get the previous action index
+            # Get the previous action index leading to this decision node
             prev_action_idx = decision_node.prev_action_index
 
             grandparent_node = chance_node.parent
+            # Add Q-value and remove virtual loss added during selection
             grandparent_node.q_value_sums[prev_action_idx] += q_value + 1.0
 
             # Move up the tree

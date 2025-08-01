@@ -4,11 +4,11 @@ isolated, determinised futures and take the majority vote on action
 selection and tree policy derived from visit counts.
 """
 
-import multiprocessing as mp
 import random
 import zlib
 
 import torch
+from torch import multiprocessing as torch_mp
 import numpy as np
 
 from mcts_agent import MCTSAgent, ACTION_SPACE, MCTS_ITERATIONS, BATCH_SIZE
@@ -23,11 +23,19 @@ class MCTSAgentEnsemble(MCTSAgent):
 
     def __init__(self, checkpoint_name, batch_size=BATCH_SIZE):
         super(MCTSAgentEnsemble, self).__init__(checkpoint_name, batch_size=batch_size)
-        # Pre-allocate queues for parallel MCTS simulations. Each worker has its own response queue
-        # to avoid contention when receiving responses from the queue.
-        self.response_queues = { worker_id: mp.Queue() for worker_id in range(self.n_workers) }
-        self.request_queue = mp.Queue()
-        self.result_queue = mp.Queue()
+
+        # Queues for inter-process communication
+
+        # Sends tasks to workers
+        self.task_queue = torch_mp.Queue()
+        # Receives results from workers
+        self.result_queue = torch_mp.Queue()
+        # Queues for inference requests and responses within process
+        self.request_queue = torch_mp.Queue()
+        self.response_queues = {
+            worker_id: torch_mp.Queue() for worker_id in range(self.n_workers)
+        }
+
         # Create and start the synchronous inference server which handles model inference
         # requests sent by the MCTS workers.
         self.inference_server = InferenceServer(
@@ -38,6 +46,40 @@ class MCTSAgentEnsemble(MCTSAgent):
         )
         self.inference_server.start()
         self.episode_count = 0
+
+        # Shared memory to reduce overhead from inter-process communication
+        state_shape = (8, 20, 10)
+        self.shared_buffers = [
+            torch.zeros(state_shape, dtype=torch.float32)
+            for _ in range(self.n_workers)
+        ]
+        for buffer in self.shared_buffers:
+            buffer.share_memory_()
+
+        self.worker_processes = []
+        for worker_id in range(self.n_workers):
+            p = torch_mp.Process(
+                target=ensemble_mcts_helper,
+                args=(
+                    self.task_queue,
+                    self.result_queue,
+                    self.request_queue,
+                    self.response_queues[worker_id],
+                    worker_id,
+                    self.shared_buffers[worker_id],
+                    MCTS_ITERATIONS
+                )
+            )
+            p.start()
+            self.worker_processes.append(p)
+
+    def stop(self):
+        """Stops the inference server and all worker processes."""
+        self.inference_server.stop()
+        for _ in range(self.n_workers):
+            self.task_queue.put(None)
+        for p in self.worker_processes:
+            p.join()
 
     def run_episode(self, model, benchmark=False):
         """
@@ -114,8 +156,6 @@ class MCTSAgentEnsemble(MCTSAgent):
         - tree_policy: The probability distribution over actions given by mean visit counts
         """
 
-        processes = []
-
         for worker_id in range(self.n_workers):
 
             # Each process has its own seed for reproducibility and to prevent the same
@@ -124,39 +164,24 @@ class MCTSAgentEnsemble(MCTSAgent):
             seed_string = "-".join(map(str, seed_tuple))
             process_seed = zlib.adler32(seed_string.encode('utf-8')) % RANDOM_SEED_MODULUS
 
-            p = mp.Process(
-                target=ensemble_mcts_helper,
-                args=(
-                    self.env.copy(),
-                    self.request_queue,
-                    self.response_queues[worker_id],
-                    worker_id,
-                    self.result_queue,
-                    MCTS_ITERATIONS,
-                    process_seed
-                )
-            )
-            p.start()
-            processes.append(p)
-
-        # Block until all processes are finished
-        for p in processes:
-            p.join()
+            task = {
+                "env_state": self.env.save_partial_state(),
+                "process_seed": process_seed
+            }
+            self.task_queue.put(task)
 
         # Fetch results from all processes
-        root_nodes = [self.result_queue.get() for _ in processes]
+        results = [self.result_queue.get() for _ in range(self.n_workers)]
 
         # Stack visit counts from all root nodes and compute the mean
-        mean_visit_counts = np.mean(
-            [node["visit_counts"] for node in root_nodes],
-            axis=0
-        )
+        mean_visit_counts = np.mean([res["visit_counts"] for res in results], axis=0)
+        # Available actions are the same for all workers at the root node
+        available_actions = results[0]["actions"]
 
         # The next action and tree policy is derived from the aggregate visit counts
         # of actions available to the root nodes in the simulations.
 
         tree_policy = np.zeros(ACTION_SPACE, dtype=np.float32)
-        available_actions = root_nodes[0]["actions"]
 
         if len(available_actions) == 0:
             # Game ends
@@ -177,37 +202,50 @@ class MCTSAgentEnsemble(MCTSAgent):
         return chosen_action, available_actions, tree_policy
 
 def ensemble_mcts_helper(
-    copy_env: Tetris,
-    request_queue: mp.Queue,
-    response_queue: mp.Queue,
+    task_queue: torch_mp.Queue,
+    result_queue: torch_mp.Queue,
+    request_queue: torch_mp.Queue,
+    response_queue: torch_mp.Queue,
     worker_id: int,
-    result_queue: mp.Queue,
-    iterations: int,
-    process_seed: int,
+    shared_buffer: torch.Tensor,
+    iterations: int
 ):
     """
     Helper function used by a single process for parallel simulations that runs MCTS
     iterations on a single node and puts the results into the result queue.
     """
 
-    np.random.seed(process_seed)
-    torch.manual_seed(process_seed)
-    random.seed(process_seed)
+    env = Tetris()
 
-    root_node = MCTreeNodeDeterminised(
-        env=copy_env,
-        request_queue=request_queue,
-        response_queue=response_queue,
-        worker_id=worker_id,
-        is_root=True
-    )
+    while True:
 
-    for _ in range(iterations):
-        root_node.run_iteration()
+        task = task_queue.get()
 
-    actions = root_node.available_actions
+        if task is None:
+            break
 
-    result_queue.put({
-        "actions": actions,
-        "visit_counts": root_node.visit_counts[actions],
-    })
+        env.load_partial_state(task["env_state"])
+        process_seed = task["process_seed"]
+
+        np.random.seed(process_seed)
+        torch.manual_seed(process_seed)
+        random.seed(process_seed)
+
+        root_node = MCTreeNodeDeterminised(
+            env=env,
+            request_queue=request_queue,
+            response_queue=response_queue,
+            worker_id=worker_id,
+            shared_buffer=shared_buffer,
+            is_root=True
+        )
+
+        for _ in range(iterations):
+            root_node.run_iteration()
+
+        actions = root_node.available_actions
+
+        result_queue.put({
+            "actions": actions,
+            "visit_counts": root_node.visit_counts[actions],
+        })

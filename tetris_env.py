@@ -328,3 +328,22 @@ class Tetris:
         grid = np.zeros((1, self.height, self.width), dtype=np.float32)
         np.copyto(grid[0], self.grid)
         return grid
+
+    def save_partial_state(self):
+        """
+        Returns a tuple containing the flattened representation of the grid
+        and current Tetromino type.
+        """
+        partial_state = (self.grid.flatten(), self.get_current_tetromino_type())
+        return partial_state
+
+    def load_partial_state(self, partial_state):
+        """
+        Load a state from a flattened representation.
+        The state is expected to be a tuple of (grid, tetromino_type).
+
+        Note: Does not copy any other game state attributes like score or done.
+        """
+        flattened_grid, tetromino_type = partial_state
+        self.grid = flattened_grid.reshape((self.height, self.width))
+        self.create_tetromino(tetromino_type)

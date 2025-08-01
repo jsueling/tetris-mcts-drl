@@ -140,7 +140,7 @@ class MCTSAgentAsync(MCTSAgent):
                 score_before_action = self.env.score
                 state_before_action = self.env.get_state()
                 legal_actions = np.zeros(ACTION_SPACE, dtype=np.float32)
-                legal_actions[list(root_node.chance_node_children.keys())] = 1.0
+                legal_actions[root_node.available_actions] = 1.0
 
                 transitions.append([
                     state_before_action,

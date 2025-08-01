@@ -239,7 +239,7 @@ class Tetris:
         # All actions are initially illegal. Actions are represented
         # as indices in base max_columns as rotation * max_columns + column
         # where rotation is in [0, 3] and column is in [0, 9]
-        legal_actions = np.array([False] * (max_columns * max_rotations))
+        legal_actions = np.zeros((max_columns * max_rotations,), dtype=bool)
 
         # Get the number of unique rotations for the current Tetromino
         # since Tetrominoes have symmetric rotations.
@@ -258,7 +258,7 @@ class Tetris:
 
         return legal_actions
 
-    def step(self, action, colour=1):
+    def step(self, action_idx: int, colour=1):
         """
         Perform a step in the game by applying the given action.
 
@@ -269,10 +269,10 @@ class Tetris:
         Returns:
         - done (bool): True if the game is over, False otherwise.
         """
-        if action < 0 or action >= self.width * 4:
+        if action_idx < 0 or action_idx >= self.width * 4:
             return True
 
-        rotation, col = divmod(action, self.width)
+        rotation, col = divmod(action_idx, self.width)
         self.tetromino.spawn(x=col, rotation=rotation)
 
         if self.intersects():
@@ -309,12 +309,41 @@ class Tetris:
 
     def get_state(self):
         """
-        Returns a representation of the current game state used by the neural network:
+        Returns a representation of the current game state used by the dual-headed neural network
+        for selecting actions and evaluating the game state:
         - The first layer encodes the grid, where each cell is either 0 (empty) or 1 (filled).
-        - Layers 1 to 7 are a one-hot encoding of the current Tetromino type (filled with 1s when active).
+        - Layers 1 to 7 are a one-hot encoding of the current Tetromino type
+        (filled with 1s when active).
         """
         state = np.zeros((1 + len(Tetromino.figures), self.height, self.width), dtype=np.float32)
         np.copyto(state[0], self.grid)
         tetromino_type = self.get_current_tetromino_type()
         state[tetromino_type + 1, :, :] = 1.0
         return state
+
+    def get_grid(self):
+        """
+        Returns the current grid of the Tetris game, used by the reward predictor neural network.
+        """
+        grid = np.zeros((1, self.height, self.width), dtype=np.float32)
+        np.copyto(grid[0], self.grid)
+        return grid
+
+    def save_partial_state(self):
+        """
+        Returns a tuple containing the flattened representation of the grid
+        and current Tetromino type.
+        """
+        partial_state = (self.grid.flatten(), self.get_current_tetromino_type())
+        return partial_state
+
+    def load_partial_state(self, partial_state):
+        """
+        Load a state from a flattened representation.
+        The state is expected to be a tuple of (grid, tetromino_type).
+
+        Note: Does not copy any other game state attributes like score or done.
+        """
+        flattened_grid, tetromino_type = partial_state
+        self.grid = flattened_grid.reshape((self.height, self.width))
+        self.create_tetromino(tetromino_type)

@@ -1,10 +1,11 @@
 """Inference server to handle requests for model inference in parallel."""
 
-import multiprocessing as mp
+from queue import Empty
 import asyncio
 
 import numpy as np
 import torch
+from torch import multiprocessing as torch_mp
 
 class InferenceServer:
     """Synchronous inference server to handle requests for model inference in parallel processes."""
@@ -12,9 +13,9 @@ class InferenceServer:
     def __init__(self, model, request_queue, response_queues, n_workers):
         self.request_queue = request_queue
         self.response_queues = response_queues
-        self.server_process = mp.Process(
+        self.server_process = torch_mp.Process(
             target=self._handle_inference_requests,
-            args=(self.request_queue, self.response_queues, model, n_workers)
+            args=(self.request_queue, self.response_queues, model.cpu(), n_workers, model.device)
         )
 
     def set_model(self, model):
@@ -40,11 +41,14 @@ class InferenceServer:
         for q in self.response_queues.values():
             q.join_thread()
 
-    def _handle_inference_requests(self, request_queue, response_queues, model, n_workers):
+    def _handle_inference_requests(self, request_queue, response_queues, model, n_workers, device):
         """
         Manage model inference requests from multiple workers,
         process them using the model and send back the response
         """
+
+        # Move model to device after multiprocessing start
+        model = model.to(device)
 
         while True:
 
@@ -73,14 +77,11 @@ class InferenceServer:
                     requests.append(request)
                     states.append(request['state'])
 
-                except mp.queues.Empty:
+                except Empty:
                     if requests:
                         break
 
-            states_gpu = torch.tensor(
-                np.array(states),
-                dtype=torch.float32
-            ).to(model.device)
+            states_gpu = torch.stack(states).to(model.device)
 
             model.eval()
             with torch.no_grad():
@@ -94,7 +95,8 @@ class InferenceServer:
                 worker_id = req['worker_id']
                 response_queues[worker_id].put({
                     'policy_logits': pol,
-                    'value': val.item()
+                    'value': val.item(),
+                    'shared_buffer': req["state"]
                 })
 
 class AsyncInferenceServer():

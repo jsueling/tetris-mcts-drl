@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 from mcts_agent_async import MCTSAgentAsync
-# from mcts_agent_ensemble import MCTSAgentEnsemble
+from mcts_agent_ensemble import MCTSAgentEnsemble
 
 if __name__ == "__main__":
 
@@ -17,8 +17,19 @@ if __name__ == "__main__":
         # Benchmarks, then caches most efficient convolution algorithms
         # given the current configuration. Do not use if input sizes change frequently
         torch.backends.cudnn.benchmark = True
+        # Enables use of fast TF32 Tensor Cores for matrix multiplications
+        torch.set_float32_matmul_precision('high')
 
     parser = argparse.ArgumentParser(description="Train MCTS agent to play Tetris.")
+
+    parser.add_argument(
+        "--agent_type",
+        "-a",
+        choices=["async", "ensemble"],
+        required=True,
+        help="Type of MCTS agent to train: 'async' for MCTSAgentAsync or "
+             "'ensemble' for MCTSAgentEnsemble."
+    )
 
     parser.add_argument(
         "--checkpoint_name",
@@ -38,12 +49,21 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    checkpoint_name = args.checkpoint_name + f"_seed_{args.seed}"
+    checkpoint_name = args.checkpoint_name + f"_{args.agent_type}_seed_{args.seed}"
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    agent = MCTSAgentAsync(checkpoint_name=checkpoint_name)
-    # agent = MCTSAgentEnsemble(checkpoint_name=checkpoint_name)
-    agent.train()
+    if args.agent_type == "async":
+        agent = MCTSAgentAsync(checkpoint_name=checkpoint_name)
+        agent.train()
+    elif args.agent_type == "ensemble":
+        agent = None
+        try:
+            agent = MCTSAgentEnsemble(checkpoint_name=checkpoint_name)
+            agent.train()
+        finally:
+            # Clean up resources
+            if agent is not None:
+                agent.stop()

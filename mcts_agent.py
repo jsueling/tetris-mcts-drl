@@ -4,6 +4,7 @@ import time
 
 from tqdm import tqdm
 import numpy as np
+import torch
 
 from experience_replay_buffer import ExperienceReplayBuffer
 from tetris_env import Tetris
@@ -37,6 +38,11 @@ class MCTSAgent:
             updates_per_iteration=updates_per_iteration,
             num_actions=ACTION_SPACE
         )
+
+        if torch.cuda.is_available():
+            self.model = torch.compile(self.model)
+            self.candidate_model = torch.compile(self.candidate_model)
+
         self.buffer = ExperienceReplayBuffer(
             batch_size=batch_size,
             max_size=500000,
@@ -207,6 +213,9 @@ class MCTSAgent:
             num_actions=ACTION_SPACE,
             updates_per_iteration=self.updates_per_iteration,
         )
+
+        if torch.cuda.is_available():
+            self.candidate_model = torch.compile(self.candidate_model)
 
         # Reset candidate model to the current best model's state
         self.candidate_model.load_state_dict(self.model.state_dict())

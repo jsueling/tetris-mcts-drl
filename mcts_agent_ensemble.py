@@ -15,6 +15,7 @@ from mcts_agent import MCTSAgent, ACTION_SPACE, MCTS_ITERATIONS, BATCH_SIZE
 from tetris_env import Tetris
 from mcts import MCTreeNodeDeterminised
 from inference_server import InferenceServer
+from model import A0ResNet
 
 RANDOM_SEED_MODULUS = 2 ** 32 # Seed methods accept 32-bit integers only
 
@@ -39,7 +40,13 @@ class MCTSAgentEnsemble(MCTSAgent):
         # Create and start the synchronous inference server which handles model inference
         # requests sent by the MCTS workers.
         self.inference_server = InferenceServer(
-            model=self.model,
+            model_base_class=A0ResNet,
+            model_state_dict=self.model.state_dict(),
+            model_init_params={
+                "num_residual_blocks": 19,
+                "updates_per_iteration": self.updates_per_iteration,
+                "num_actions": ACTION_SPACE
+            },
             request_queue=self.request_queue,
             response_queues=self.response_queues,
             n_workers=self.n_workers
@@ -75,11 +82,16 @@ class MCTSAgentEnsemble(MCTSAgent):
 
     def stop(self):
         """Stops the inference server and all worker processes."""
-        self.inference_server.stop()
+        # None is the sentinel value to signal workers to stop
         for _ in range(self.n_workers):
             self.task_queue.put(None)
         for p in self.worker_processes:
             p.join()
+        self.inference_server.stop()
+        self.task_queue.close()
+        self.result_queue.close()
+        self.task_queue.join_thread()
+        self.result_queue.join_thread()
 
     def run_episode(self, model, benchmark=False):
         """
@@ -243,9 +255,15 @@ def ensemble_mcts_helper(
         for _ in range(iterations):
             root_node.run_iteration()
 
-        actions = root_node.available_actions
+        # A terminal node is never expanded, so has no available actions.
+        if root_node.available_actions is None:
+            actions = np.array([], dtype=np.int32)
+            visit_counts = np.array([], dtype=np.float32)
+        else:
+            actions = root_node.available_actions
+            visit_counts = root_node.visit_counts[actions]
 
         result_queue.put({
             "actions": actions,
-            "visit_counts": root_node.visit_counts[actions],
+            "visit_counts": visit_counts,
         })

@@ -7,15 +7,37 @@ import numpy as np
 import torch
 from torch import multiprocessing as torch_mp
 
+DEVICE = (
+    "cuda" if torch.cuda.is_available() else \
+    "mps" if torch.backends.mps.is_available() else "cpu"
+)
+
 class InferenceServer:
     """Synchronous inference server to handle requests for model inference in parallel processes."""
 
-    def __init__(self, model, request_queue, response_queues, n_workers):
+    def __init__(
+        self,
+        model_base_class,
+        model_state_dict,
+        model_init_params,
+        request_queue,
+        response_queues,
+        n_workers,
+        device=DEVICE
+    ):
         self.request_queue = request_queue
         self.response_queues = response_queues
         self.server_process = torch_mp.Process(
             target=self._handle_inference_requests,
-            args=(self.request_queue, self.response_queues, model.cpu(), n_workers, model.device)
+            args=(
+                model_base_class,
+                model_state_dict,
+                model_init_params,
+                request_queue,
+                response_queues,
+                n_workers,
+                device
+            )
         )
 
     def set_model(self, model):
@@ -31,7 +53,7 @@ class InferenceServer:
 
     def stop(self):
         """Stop the inference server."""
-        # None is the shutdown signal
+        # None is the sentinel value to signal shutdown
         self.request_queue.put(None)
         self.server_process.join()
         self.request_queue.close()
@@ -41,14 +63,30 @@ class InferenceServer:
         for q in self.response_queues.values():
             q.join_thread()
 
-    def _handle_inference_requests(self, request_queue, response_queues, model, n_workers, device):
+    def _handle_inference_requests(
+        self,
+        model_base_class,
+        model_state_dict,
+        model_init_params,
+        request_queue,
+        response_queues,
+        n_workers,
+        device
+    ):
         """
         Manage model inference requests from multiple workers,
         process them using the model and send back the response
         """
 
-        # Move model to device after multiprocessing start
-        model = model.to(device)
+        # Instantiate model within process due to serialisation issues.
+        # Re-set configuration after new process spawns
+        model = model_base_class(**model_init_params).to(device)
+        if torch.cuda.is_available():
+            # Compiled model class is a wrapper of the base class
+            model = torch.compile(model)
+            torch.set_float32_matmul_precision('high')
+            torch.backends.cudnn.benchmark = True
+        model.load_state_dict(model_state_dict)
 
         while True:
 
@@ -64,7 +102,7 @@ class InferenceServer:
                         break
 
                     request = request_queue.get(timeout=1e-4)
-                    # Shutdown signal None received
+
                     if request is None:
                         return
 
@@ -81,7 +119,7 @@ class InferenceServer:
                     if requests:
                         break
 
-            states_gpu = torch.stack(states).to(model.device)
+            states_gpu = torch.stack(states).to(model.device).contiguous()
 
             model.eval()
             with torch.no_grad():

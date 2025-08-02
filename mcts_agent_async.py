@@ -6,6 +6,7 @@ concurrent shared tree expansion.
 import asyncio
 import time
 
+import torch
 from tqdm import tqdm
 import numpy as np
 
@@ -201,6 +202,9 @@ class MCTSAgentAsync(MCTSAgent):
             num_actions=ACTION_SPACE,
             updates_per_iteration=self.updates_per_iteration,
         )
+
+        if torch.cuda.is_available():
+            self.candidate_model = torch.compile(self.candidate_model)
 
         # Reset candidate model to the current best model's state
         self.candidate_model.load_state_dict(self.model.state_dict())

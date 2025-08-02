@@ -251,7 +251,8 @@ class MCTreeNodeDeterminised:
         # where (v, p_a) = f(s) is the NN evaluation of the previous node (s),
 
         self.available_actions = np.where(legal_actions)[0]
-        self.children = np.empty(ACTION_SPACE, dtype=object)
+        # Warning: References to child node objects in np arrays causes memory leak
+        self.children = [None] * ACTION_SPACE
         self.visit_counts = np.zeros(ACTION_SPACE, dtype=np.float32)
         self.q_value_sums = np.zeros(ACTION_SPACE, dtype=np.float32)
         self.prior_probabilities = action_probabilities
@@ -289,7 +290,7 @@ class ChanceNode:
         self.parent = parent
 
         # Each chance node leads to a decision node for each possible Tetromino type.
-        # Warning: References to child node objects in np arrays caused a memory leak
+        # Warning: References to child node objects in np arrays causes memory leak
         self.decision_node_children: np.ndarray[MCDecisionNodeAsync] = \
             [None] * len(Tetromino.figures)
 
@@ -558,7 +559,7 @@ class MCDecisionNodeAsync:
         self.visit_counts = np.zeros(ACTION_SPACE, dtype=np.float32)
         self.q_value_sums = np.zeros(ACTION_SPACE, dtype=np.float32)
         self.available_actions = available_actions
-        # Warning: References to child node objects in np arrays caused a memory leak
+        # Warning: References to child node objects in np arrays causes memory leak
         self.chance_node_children = [None] * ACTION_SPACE
         self.prior_probabilities = action_probabilities
 

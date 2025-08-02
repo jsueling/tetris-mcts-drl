@@ -649,12 +649,35 @@ class MCDecisionNodeAsync:
         - successor: The new root node of the subtree corresponding
         to the action and Tetromino type.
         """
+
+        if self.chance_node_children[action_idx] is None:
+            self.chance_node_children[action_idx] = ChanceNode(parent=self)
+
+        # Traverse to child chance node, JIT-initialised when missing
         chance_node = self.chance_node_children[action_idx]
+
+        if chance_node.decision_node_children[tetromino_type] is None:
+
+            copy_env = self.env.copy()
+            copy_env.step(action_idx)
+            copy_env.create_tetromino(tetromino_type)
+
+            chance_node.decision_node_children[tetromino_type] = MCDecisionNodeAsync(
+                env=copy_env,
+                request_queue=self.request_queue,
+                response_queues=self.response_queues,
+                parent=chance_node,
+                prev_action_idx=action_idx
+            )
+
+        # Traverse to grandchild decision node, JIT-initialised when missing
         successor = chance_node.decision_node_children[tetromino_type]
 
         # Disconnect all parent pointers (references to the unused tree) to allow garbage collection
         chance_node.parent = None
         for child in chance_node.decision_node_children:
+            if child is None:
+                continue
             child.parent = None
         chance_node.decision_node_children = None
 

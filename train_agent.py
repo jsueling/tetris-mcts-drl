@@ -1,4 +1,4 @@
-"""Script for running the training of the MCTS agent."""
+"""Script for starting the training of a Deep MCTS agent that learns to play Tetris."""
 
 import multiprocessing as mp
 import argparse
@@ -7,8 +7,8 @@ import random
 import numpy as np
 import torch
 
-from mcts_agent_async import MCTSAgentAsync
-from mcts_agent_ensemble import MCTSAgentEnsemble
+from deep_mcts_agent_async import DeepMCTSAgentAsync
+from deep_mcts_agent_ensemble import DeepMCTSAgentEnsemble
 
 if __name__ == "__main__":
 
@@ -20,15 +20,15 @@ if __name__ == "__main__":
         # Enables use of fast TF32 Tensor Cores for matrix multiplications
         torch.set_float32_matmul_precision('high')
 
-    parser = argparse.ArgumentParser(description="Train MCTS agent to play Tetris.")
+    parser = argparse.ArgumentParser(description="Train Deep MCTS agent to play Tetris.")
 
     parser.add_argument(
         "--agent_type",
         "-a",
         choices=["async", "ensemble"],
         required=True,
-        help="Type of MCTS agent to train: 'async' for MCTSAgentAsync or "
-             "'ensemble' for MCTSAgentEnsemble."
+        help="Type of Deep MCTS agent to train: 'async' for DeepMCTSAgentAsync or "
+             "'ensemble' for DeepMCTSAgentEnsemble."
     )
 
     parser.add_argument(
@@ -56,12 +56,12 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
 
     if args.agent_type == "async":
-        agent = MCTSAgentAsync(checkpoint_name=checkpoint_name)
+        agent = DeepMCTSAgentAsync(checkpoint_name=checkpoint_name)
         agent.train()
     elif args.agent_type == "ensemble":
         agent = None
         try:
-            agent = MCTSAgentEnsemble(checkpoint_name=checkpoint_name)
+            agent = DeepMCTSAgentEnsemble(checkpoint_name=checkpoint_name)
             agent.train()
         finally:
             # Clean up resources

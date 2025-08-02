@@ -12,12 +12,12 @@ import numpy as np
 import torch
 
 if TYPE_CHECKING:
-    from mcts_agent import MCTSAgent
+    from deep_mcts_agent import DeepMCTSAgent
 
 class Checkpoint:
     """A class that handles saving and loading the entire training state of the agent"""
 
-    def __init__(self, name, agent: "MCTSAgent"):
+    def __init__(self, name, agent: "DeepMCTSAgent"):
 
         directory = "./out/"
         os.makedirs(directory, exist_ok=True)

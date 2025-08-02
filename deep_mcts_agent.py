@@ -1,4 +1,4 @@
-"""MCTS + DRL agent that learns how to play Tetris"""
+"""This file contains the orchestration of the agent logic"""
 
 import time
 
@@ -16,8 +16,8 @@ MCTS_ITERATIONS = 800 # Number of MCTS iterations per action selection
 ACTION_SPACE = 40 # Upper bound on possible actions for hard drop (rotations * columns placements)
 BATCH_SIZE = 256 # Batch size for experience replay
 
-class MCTSAgent:
-    """MCTS + DRL agent for playing Tetris."""
+class DeepMCTSAgent:
+    """Deep MCTS agent that learns how to play Tetris."""
     def __init__(
         self,
         checkpoint_name,
@@ -85,7 +85,7 @@ class MCTSAgent:
         )
 
     def train(self):
-        """Run the training loop for the MCTS agent."""
+        """Run the training loop for the Deep MCTS agent."""
 
         # Attempt to restore if there is a saved state
         self.checkpoint.restore_checkpoint()
@@ -104,7 +104,7 @@ class MCTSAgent:
             range(starting_iteration, self.total_iterations),
             initial=starting_iteration,
             total=self.total_iterations,
-            desc="Training MCTS agent",
+            desc="Training Deep MCTS agent",
             unit="iteration"
         ):
 

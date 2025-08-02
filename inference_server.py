@@ -53,7 +53,7 @@ class InferenceServer:
 
     def stop(self):
         """Stop the inference server."""
-        # None is the shutdown signal
+        # None is the sentinel value to signal workers to stop
         self.request_queue.put(None)
         self.server_process.join()
         self.request_queue.close()
@@ -102,7 +102,7 @@ class InferenceServer:
                         break
 
                     request = request_queue.get(timeout=1e-4)
-                    # Shutdown signal None received
+
                     if request is None:
                         return
 

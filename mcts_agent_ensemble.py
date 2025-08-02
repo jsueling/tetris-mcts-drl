@@ -82,7 +82,7 @@ class MCTSAgentEnsemble(MCTSAgent):
 
     def stop(self):
         """Stops the inference server and all worker processes."""
-
+        # None is the sentinel value to signal workers to stop
         for _ in range(self.n_workers):
             self.task_queue.put(None)
         for p in self.worker_processes:
@@ -255,6 +255,7 @@ def ensemble_mcts_helper(
         for _ in range(iterations):
             root_node.run_iteration()
 
+        # A terminal node is never expanded, so has no available actions.
         if root_node.available_actions is None:
             actions = np.array([], dtype=np.int32)
             visit_counts = np.array([], dtype=np.float32)

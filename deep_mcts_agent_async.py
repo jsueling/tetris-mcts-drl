@@ -1,5 +1,5 @@
 """
-Asynchronous MCTS DRL agent for Tetris using multiple workers for
+Asynchronous Deep MCTS agent for Tetris using multiple workers for
 concurrent shared tree expansion.
 """
 
@@ -10,16 +10,16 @@ import torch
 from tqdm import tqdm
 import numpy as np
 
-from mcts_agent import MCTSAgent, ACTION_SPACE, MCTS_ITERATIONS, BATCH_SIZE
+from deep_mcts_agent import DeepMCTSAgent, ACTION_SPACE, MCTS_ITERATIONS, BATCH_SIZE
 from mcts import MCDecisionNodeAsync
 from inference_server import AsyncInferenceServer
 from model import A0ResNet
 
-class MCTSAgentAsync(MCTSAgent):
-    """Asynchronous MCTS agent for Tetris."""
+class DeepMCTSAgentAsync(DeepMCTSAgent):
+    """Asynchronous Deep MCTS agent that learns how to play Tetris."""
 
     def __init__(self, checkpoint_name, batch_size=BATCH_SIZE):
-        super(MCTSAgentAsync, self).__init__(checkpoint_name, batch_size=batch_size)
+        super(DeepMCTSAgentAsync, self).__init__(checkpoint_name, batch_size=batch_size)
         # Pre-allocate queues for asynchronous tree traversal. Each worker has its
         # own response queue to avoid contention when receiving responses from the queue.
         self.response_queues = { worker_id: asyncio.Queue() for worker_id in range(self.n_workers) }
@@ -38,7 +38,7 @@ class MCTSAgentAsync(MCTSAgent):
         asyncio.run(self._train_async())
 
     async def _train_async(self):
-        """Run the asynchronous training loop for the MCTS agent."""
+        """Run the asynchronous training loop for the Deep MCTS agent."""
 
         # Attempt to restore if there is a saved state
         self.checkpoint.restore_checkpoint()
@@ -60,7 +60,7 @@ class MCTSAgentAsync(MCTSAgent):
             range(starting_iteration, self.total_iterations),
             initial=starting_iteration,
             total=self.total_iterations,
-            desc="Training MCTS agent",
+            desc="Training Deep MCTS agent",
             unit="iteration"
         ):
 
@@ -96,7 +96,7 @@ class MCTSAgentAsync(MCTSAgent):
 
     async def run_episode_async(self, model, benchmark=False, explore_threshold=30):
         """
-        Runs a single episode of an MCTS agent that uses multiple workers
+        Runs a single episode of a Deep MCTS agent that uses multiple workers
         to expand a shared tree using async/await to mimic threading.
         Arguments:
             model: The model to use for inference during the episode.
@@ -216,7 +216,7 @@ async def run_async_mcts(
     first_step: bool = False,
 ):
     """
-    Run the MCTS agent with multiple asynchronous workers that update the same
+    Runs Monte Carlo tree search with multiple asynchronous workers that update the same
     shared tree. Iterations are divided evenly among the workers.
     """
     iterations_per_worker = iterations // n_workers

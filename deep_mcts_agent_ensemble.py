@@ -1,6 +1,6 @@
 """
-MCTS DRL agent ensemble for Tetris using parallelised workers to explore
-isolated, determinised futures and take the majority vote on action
+Deep MCTS agent ensemble for Tetris which uses parallelised workers to explore
+isolated, determinised futures. It takes the majority vote on action
 selection and tree policy derived from visit counts.
 """
 
@@ -11,7 +11,7 @@ import torch
 from torch import multiprocessing as torch_mp
 import numpy as np
 
-from mcts_agent import MCTSAgent, ACTION_SPACE, MCTS_ITERATIONS, BATCH_SIZE
+from deep_mcts_agent import DeepMCTSAgent, ACTION_SPACE, MCTS_ITERATIONS, BATCH_SIZE
 from tetris_env import Tetris
 from mcts import MCTreeNodeDeterminised
 from inference_server import InferenceServer
@@ -19,11 +19,11 @@ from model import A0ResNet
 
 RANDOM_SEED_MODULUS = 2 ** 32 # Seed methods accept 32-bit integers only
 
-class MCTSAgentEnsemble(MCTSAgent):
-    """Ensemble of MCTS agents for Tetris."""
+class DeepMCTSAgentEnsemble(DeepMCTSAgent):
+    """Deep MCTS agent ensemble that learns how to play Tetris."""
 
     def __init__(self, checkpoint_name, batch_size=BATCH_SIZE):
-        super(MCTSAgentEnsemble, self).__init__(checkpoint_name, batch_size=batch_size)
+        super(DeepMCTSAgentEnsemble, self).__init__(checkpoint_name, batch_size=batch_size)
 
         # Queues for inter-process communication
 
@@ -95,8 +95,9 @@ class MCTSAgentEnsemble(MCTSAgent):
 
     def run_episode(self, model, benchmark=False):
         """
-        Runs a single episode of an MCTS agent ensemble that explore separate determinised futures
-        in parallel and take the majority vote on action selection and tree policy.
+        Runs a single episode of a Deep MCTS agent ensemble that explores separate
+        determinised futures in parallel, taking the majority vote on action selection
+        and tree policy for model updates.
         """
 
         self.env.reset()
